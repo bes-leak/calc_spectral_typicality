@@ -1,0 +1,2 @@
+# Intentionally empty: widgets package
+

@@ -1,0 +1,5 @@
+<RCC>
+    <qresource prefix="/plugins/calc_sp_ch" >
+        <file>icon.png</file>
+    </qresource>
+</RCC>

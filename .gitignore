@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Сборка плагина и документации
+help/build/
+*.qm
+*.zip
+
+# IDE и локальные настройки
+.idea/
+.vscode/
+.claude/settings.local.json
+*.pro.user
+
+# ОС
+Thumbs.db
+.DS_Store
+desktop.ini
