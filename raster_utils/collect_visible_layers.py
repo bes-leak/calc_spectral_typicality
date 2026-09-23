@@ -1,25 +1,25 @@
-from qgis.core import QgsLayerTreeLayer   # не qgis._core: это приватный модуль
+from qgis.core import QgsLayerTreeLayer   # not qgis._core: that module is private
 
 
 def get_visible_raster_layers(project):
     """
-    Возвращает список только видимых растровых слоёв
+    Return only the raster layers that are currently visible.
     """
     visible_layers = []
     root = project.layerTreeRoot()
 
     def collect_visible_rasters(node):
-        """Рекурсивный сбор видимых растров"""
-        if not node.isVisible():  # Слой скрыт — пропускаем всю группу
+        """Recursively collect visible rasters"""
+        if not node.isVisible():  # Node is hidden, skip the whole group
             return
 
         if isinstance(node, QgsLayerTreeLayer):
             layer = node.layer()
-            # Проверяем: растр + виден + валиден
+            # Check: raster + visible + valid
             if layer and layer.type() == 1 and layer.isValid():
                 visible_layers.append(layer)
 
-        # Рекурсивно обрабатываем дочерние элементы (группы)
+        # Recurse into child nodes (groups)
         for child in node.children():
             collect_visible_rasters(child)
 

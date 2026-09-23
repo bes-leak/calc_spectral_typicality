@@ -65,9 +65,9 @@ def values_to_histograms(series: list, histogram_fn) -> list:
     """
     series: list of tuples (label, values_array)
     histogram_fn: callable(values)->(counts, bins)
-    Returns list of tuples (label, counts, bins) — готово для plot_histograms.
+    Returns list of tuples (label, counts, bins), ready for plot_histograms.
 
-    Считается один раз; при смене типа графика пересчёт не нужен.
+    Computed once; switching the plot type does not require recomputing it.
     """
     histograms = []
     for label, values in series:

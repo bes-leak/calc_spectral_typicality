@@ -19,7 +19,7 @@ _SIDECAR_SUFFIXES = ("", ".aux.xml", ".ovr")
 
 
 def mask_dir() -> str:
-    """Отдельная папка во временном каталоге — чтобы уборка не трогала чужое."""
+    """A separate folder inside the temp directory, so cleanup never touches other files."""
     path = os.path.join(tempfile.gettempdir(), "calc_sp_ch_masks")
     try:
         os.makedirs(path, exist_ok=True)
@@ -29,12 +29,12 @@ def mask_dir() -> str:
 
 
 def remove_mask_file(path: Optional[str]) -> bool:
-    """Удалить файл маски и его спутники. True, если основной файл удалён."""
+    """Delete a mask file and its sidecars. True if the main file was removed."""
     if not path:
         return False
-    base = path.split('|')[0]          # источник может быть с |layername=...
+    base = path.split('|')[0]          # the source may carry a |layername=... suffix
     if os.path.basename(base)[:len(MASK_PREFIX)] != MASK_PREFIX:
-        return False                   # чужой файл — не трогаем
+        return False                   # not one of ours, leave it alone
     removed = False
     for suffix in _SIDECAR_SUFFIXES:
         try:
@@ -47,8 +47,8 @@ def remove_mask_file(path: Optional[str]) -> bool:
 
 def cleanup_stale_masks(max_age_hours: float = 24.0) -> int:
     """
-    Удалить маски, оставшиеся от прошлых сессий (например после падения QGIS).
-    Файлы, ещё занятые процессом, просто не удалятся — это не ошибка.
+    Delete masks left over from previous sessions (after a QGIS crash, say).
+    Files still held by a process simply will not be removed; that is not an error.
     """
     directory = mask_dir()
     deadline = time.time() - max_age_hours * 3600
@@ -88,7 +88,7 @@ def _style_mask_layer(mask_layer: QgsRasterLayer, color: str = "#00ffff", opacit
 
     mask_layer.setOpacity(opacity)
 
-    # Используем палитровый рендерер: 0 → прозрачный, 1 → нужный цвет
+    # Paletted renderer: 0 -> transparent, 1 -> the requested colour
     classes = [
         QgsPalettedRasterRenderer.Class(0, QColor(0, 0, 0, 0), "No data"),
         QgsPalettedRasterRenderer.Class(1, QColor(color), "Mask"),
@@ -181,7 +181,7 @@ def create_polygon_mask_raster(
     _style_mask_layer(mask_layer)
     project.addMapLayer(mask_layer, addToLegend=False)
     root = project.layerTreeRoot()
-    node = root.insertLayer(-1, mask_layer)  # в конец
-    node.setItemVisibilityChecked(False)  # скрыт по умолчанию
+    node = root.insertLayer(-1, mask_layer)  # at the end
+    node.setItemVisibilityChecked(False)  # hidden by default
     return mask_layer
 

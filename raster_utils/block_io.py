@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
 """
 block_io.py
-Быстрая конвертация QgsRasterBlock → numpy и привязка окна выборки
-к пиксельной сетке исходного растра.
+Fast QgsRasterBlock -> numpy conversion, plus snapping the sampling window to
+the pixel grid of the source raster.
 
-Зачем:
-* `block.value(y, x)` в цикле — это один вызов C++ на пиксель. Для окна
-  1000×1000 это миллион вызовов на канал. `block.data()` отдаёт весь буфер
-  разом, дальше numpy делает всё остальное.
-* `provider.block(band, rect, w, h)` ресемплит данные под произвольный rect.
-  Если rect не выровнен по сетке растра, возвращаются НЕ пиксели исходного
-  растра, а их пересчёт со сдвигом до полпикселя. `align_rect_to_raster`
-  снапит окно к сетке, поэтому чтение получается «один-в-один».
+Why:
+* `block.value(y, x)` in a loop is one C++ call per pixel. For a 1000x1000
+  window that is a million calls per band. `block.data()` hands over the whole
+  buffer at once and numpy does the rest.
+* `provider.block(band, rect, w, h)` resamples the data onto an arbitrary rect.
+  If the rect is not aligned to the raster grid, what comes back is NOT the
+  original pixels but a resampling of them, shifted by up to half a pixel.
+  `align_rect_to_raster` snaps the window to the grid, so the read is exact.
 """
 
 import math
@@ -19,10 +19,10 @@ import math
 import numpy as np
 from qgis.core import Qgis, QgsRectangle
 
-# Защита от заведомо бессмысленного окна. Само чтение идёт полосами
-# (extract_rectangle.CHUNK_PIXELS), поэтому память от размера окна почти не
-# зависит; этот предел — страховка от опечатки в координатах и от объектов
-# размером со сцену, которые всё равно нет смысла считать целиком.
+# Guard against an obviously meaningless window. Reading itself goes in stripes
+# (extract_rectangle.CHUNK_PIXELS), so memory barely depends on the window size;
+# this limit guards against a typo in the coordinates and against features the
+# size of a whole scene, which there is no point in sampling in full anyway.
 MAX_SAMPLE_PIXELS = 200_000_000
 
 
@@ -30,8 +30,8 @@ MAX_SAMPLE_PIXELS = 200_000_000
 # Qgis.DataType → numpy dtype
 # ---------------------------------------------------------------------------
 
-# Имена enum'а стабильны, а вот способ доступа к ним менялся
-# (Qgis.Byte в старых версиях, Qgis.DataType.Byte в новых).
+# The enum names are stable, but the way to reach them has changed
+# (Qgis.Byte in older versions, Qgis.DataType.Byte in newer ones).
 _DTYPE_BY_NAME = {
     'Byte': np.uint8,
     'Int8': np.int8,
@@ -43,7 +43,7 @@ _DTYPE_BY_NAME = {
     'Float64': np.float64,
 }
 
-# Числовые значения enum'а не менялись с QGIS 3.0 — используем как fallback.
+# The numeric enum values have not changed since QGIS 3.0, so use them as a fallback.
 _DTYPE_BY_VALUE = {
     1: np.uint8,    # Byte
     2: np.uint16,   # UInt16
@@ -57,7 +57,7 @@ _DTYPE_BY_VALUE = {
 
 
 def numpy_dtype_for(data_type):
-    """Вернуть numpy-dtype для Qgis.DataType или None, если тип не числовой."""
+    """Return the numpy dtype for a Qgis.DataType, or None if it is not numeric."""
     holder = getattr(Qgis, 'DataType', None) or Qgis
     try:
         raw = int(data_type)
@@ -78,11 +78,11 @@ def numpy_dtype_for(data_type):
 
 
 # ---------------------------------------------------------------------------
-# Чтение блока
+# Reading a block
 # ---------------------------------------------------------------------------
 
 def _mask_value(arr: np.ndarray, value: float, integral: bool) -> None:
-    """In-place: заменить пиксели со значением `value` на NaN."""
+    """In place: replace pixels equal to `value` with NaN."""
     if value is None:
         return
     value = float(value)
@@ -91,7 +91,7 @@ def _mask_value(arr: np.ndarray, value: float, integral: bool) -> None:
     if integral:
         hit = arr == value
     else:
-        # rtol=0: не хотим зацепить соседние легитимные значения
+        # rtol=0: we must not catch neighbouring legitimate values
         hit = np.isclose(arr, value, rtol=0.0, atol=abs(value) * 1e-9 + 1e-12)
     if hit.any():
         arr[hit] = np.nan
@@ -99,9 +99,9 @@ def _mask_value(arr: np.ndarray, value: float, integral: bool) -> None:
 
 def block_to_array(block):
     """
-    QgsRasterBlock → np.ndarray[float64] формы (height, width).
-    NoData и нечисловые значения заменяются на NaN.
-    Возвращает None, если блок пустой или тип данных не поддерживается.
+    QgsRasterBlock -> np.ndarray[float64] of shape (height, width).
+    NoData and non-numeric values are replaced with NaN.
+    Returns None if the block is empty or its data type is unsupported.
     """
     if block is None:
         return None
@@ -130,7 +130,7 @@ def block_to_array(block):
 
     arr = np.frombuffer(buf, dtype=dtype, count=n_pixels).reshape(height, width)
     integral = np.issubdtype(dtype, np.integer)
-    arr = arr.astype(np.float64)   # копия — исходный буфер read-only
+    arr = arr.astype(np.float64)   # a copy: the source buffer is read-only
 
     try:
         if block.hasNoDataValue():
@@ -144,8 +144,8 @@ def block_to_array(block):
 
 def mask_source_nodata(arr: np.ndarray, provider, band_idx: int) -> None:
     """
-    In-place: добить NoData провайдера (source + user-defined).
-    Блок обычно уже помечает их сам, но не все провайдеры это делают.
+    In place: mask out the provider's NoData values (source + user-defined).
+    The block usually flags them already, but not every provider does.
     """
     integral = False
     try:
@@ -169,25 +169,25 @@ def mask_source_nodata(arr: np.ndarray, provider, band_idx: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Привязка окна к сетке растра
+# Snapping the window to the raster grid
 # ---------------------------------------------------------------------------
 
 class SampleWindowTooLarge(ValueError):
-    """Окно выборки не влезает в память."""
+    """The sampling window does not fit in memory."""
 
 
 def align_rect_to_raster(raster_layer, rect, buffer_percent: float = 0.0):
     """
-    Снапнуть `rect` (в CRS растра) к пиксельной сетке растра и обрезать по его
-    охвату.
+    Snap `rect` (in the raster CRS) to the raster pixel grid and clip it to the
+    raster extent.
 
     Returns
     -------
-    (QgsRectangle, ncols, nrows) либо None, если пересечения нет.
+    (QgsRectangle, ncols, nrows), or None if there is no intersection.
 
     Raises
     ------
-    SampleWindowTooLarge — если окно больше MAX_SAMPLE_PIXELS.
+    SampleWindowTooLarge - if the window exceeds MAX_SAMPLE_PIXELS.
     """
     if rect is None or raster_layer is None:
         return None
@@ -217,7 +217,7 @@ def align_rect_to_raster(raster_layer, rect, buffer_percent: float = 0.0):
     if pixel_w <= 0 or pixel_h <= 0:
         return None
 
-    tol = 1e-9   # чтобы fp-шум не добавлял лишнюю строку/столбец
+    tol = 1e-9   # so floating-point noise does not add a spurious row/column
     col_min = int(math.floor((x_min - extent.xMinimum()) / pixel_w + tol))
     col_max = int(math.ceil((x_max - extent.xMinimum()) / pixel_w - tol))
     row_min = int(math.floor((extent.yMaximum() - y_max) / pixel_h + tol))
@@ -234,9 +234,9 @@ def align_rect_to_raster(raster_layer, rect, buffer_percent: float = 0.0):
 
     if ncols * nrows > MAX_SAMPLE_PIXELS:
         raise SampleWindowTooLarge(
-            f"Область анализа слишком велика: {ncols}×{nrows} = "
-            f"{ncols * nrows:,} пикселей (лимит {MAX_SAMPLE_PIXELS:,}).\n"
-            "Выберите объект поменьше или растр с более грубым разрешением."
+            f"The analysis area is too large: {ncols}×{nrows} = "
+            f"{ncols * nrows:,} pixels (limit {MAX_SAMPLE_PIXELS:,}).\n"
+            "Pick a smaller feature, or a raster with a coarser resolution."
         )
 
     snapped = QgsRectangle(

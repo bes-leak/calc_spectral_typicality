@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 vector_utils.py
-Работа с векторными объектами: идентификаторы и перевод геометрии в CRS растра.
+Vector feature helpers: identifiers and reprojection of geometry into the raster CRS.
 """
 
 from qgis.core import (
@@ -13,7 +13,7 @@ from qgis.core import (
 
 
 class CrsTransformError(RuntimeError):
-    """Не удалось перевести геометрию в систему координат растра."""
+    """Could not reproject the geometry into the raster coordinate system."""
 
 
 def get_feature_ids(features):
@@ -24,7 +24,7 @@ def get_feature_ids(features):
 
 
 def _categorized_renderer(layer):
-    """Рендерер слоя, если он «Категоризованный», иначе None."""
+    """The layer renderer if it is a categorized one, otherwise None."""
     try:
         renderer = layer.renderer()
     except Exception:
@@ -34,11 +34,11 @@ def _categorized_renderer(layer):
 
 def categorized_class_field(layer):
     """
-    Поле, по которому слой раскрашен в дереве слоёв.
+    The field the layer is coloured by in the layer tree.
 
-    Если пользователь стилизовал слой по классам, то поле классификации уже
-    выбрано — незачем просить выбрать его второй раз. Выражения не берём:
-    класс объекта должен читаться из атрибута.
+    If the user has already styled the layer by class, the classification field
+    is settled and there is no point asking for it a second time. Expressions
+    are ignored: a feature's class must be readable from an attribute.
     """
     renderer = _categorized_renderer(layer)
     if renderer is None:
@@ -55,11 +55,11 @@ def categorized_class_field(layer):
 
 def category_labels(layer):
     """
-    {значение поля: подпись категории} из легенды слоя.
+    {field value: category label} taken from the layer legend.
 
-    Подписи в дереве слоёв обычно короче и понятнее самих значений, поэтому
-    показываем в интерфейсе их. Сопоставление эталонов при этом идёт
-    по значению — подпись можно поменять в любой момент, значение стабильно.
+    Legend labels are usually shorter and clearer than the raw values, so they
+    are what the interface shows. Class profiles are still matched by value:
+    a label can be edited at any time, a value is stable.
     """
     renderer = _categorized_renderer(layer)
     if renderer is None:
@@ -78,10 +78,10 @@ def category_labels(layer):
 
 def geometries_in_crs(features, src_crs, dst_crs, project=None):
     """
-    [(feature, geometry в dst_crs)] для объектов с непустой геометрией.
+    [(feature, geometry in dst_crs)] for features with non-empty geometry.
 
-    Ошибку перепроекции НЕ проглатываем: продолжать с исходными координатами
-    нельзя — выборка молча уедет в другое место карты.
+    A reprojection failure is NOT swallowed: carrying on with the original
+    coordinates would silently sample a different place on the map.
     """
     project = project or QgsProject.instance()
     transform = None
@@ -101,19 +101,19 @@ def geometries_in_crs(features, src_crs, dst_crs, project=None):
         if transform is not None:
             try:
                 if geom.transform(transform) != 0:
-                    raise CrsTransformError("QgsGeometry.transform() вернул ошибку")
+                    raise CrsTransformError("QgsGeometry.transform() reported an error")
             except CrsTransformError:
                 raise
             except Exception as e:
                 raise CrsTransformError(
-                    f"объект {feature.id()}: {src_crs.authid()} → "
+                    f"feature {feature.id()}: {src_crs.authid()} → "
                     f"{dst_crs.authid()}: {e}") from e
         result.append((feature, geom))
     return result
 
 
 def geometry_in_crs(geom, src_crs, dst_crs, project=None):
-    """Одна геометрия из одной CRS в другую. None, если перевести не удалось."""
+    """A single geometry from one CRS to another. None if it could not be reprojected."""
     if geom is None or geom.isEmpty():
         return None
     if src_crs == dst_crs or not src_crs.isValid() or not dst_crs.isValid():
@@ -130,7 +130,7 @@ def geometry_in_crs(geom, src_crs, dst_crs, project=None):
 
 
 def union_geometry(geoms):
-    """Объединение геометрий или None."""
+    """The union of the geometries, or None."""
     geoms = [g for g in geoms if g is not None and not g.isEmpty()]
     if not geoms:
         return None

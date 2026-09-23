@@ -1,47 +1,44 @@
-# This file contains metadata for your plugin.
-
-# This file should be included when you package your plugin.# Mandatory items:
-
 [general]
-name=Calculate Spectral Charecteristic
-qgisMinimumVersion=3.0
-description=This plugins calculate spectral charecteristics and vizualization chanels data distribution
-version=0.1
-author=Evgeny
+name=Spectral Characteristics
+qgisMinimumVersion=3.22
+description=Per-feature spectral statistics from a raster, class reference profiles, and a typicality assessment of every feature against its class.
+version=0.2.0
+author=Evgeny Belousov
 email=belousoff.zhencka@yandex.ru
 
-about=Provide a brief description of the plugin and its purpose.
+about=Samples the raster pixels that fall inside each vector feature and turns
+    them into spectral characteristics: per-band statistics, mean vector,
+    covariance and histograms. Reference profiles can be built from the features
+    of a class and stored in the project, after which every feature is scored
+    against the profile of its own class by six similarity metrics (spectral
+    angle, Mahalanobis distance with a chi-square p-value, per-pixel SAM, inlier
+    fraction, Jeffries-Matusita distance, histogram intersection) and assigned a
+    typicality of 1 (typical), 2 (doubtful) or 3 (atypical). Includes a batch run
+    over a whole layer, a class separability matrix, and JSON/CSV export of
+    everything it computes. Requires numpy and matplotlib.
 
-tracker=http://bugs
-repository=http://repo
-# End of mandatory metadata
-
-# Recommended items:
+tracker=https://github.com/bes-leak/calc_sp_ch/issues
+repository=https://github.com/bes-leak/calc_sp_ch
+homepage=https://github.com/bes-leak/calc_sp_ch
 
 hasProcessingProvider=no
-# Uncomment the following line and add your changelog:
-# changelog=
 
-# Tags are comma separated with spaces allowed
-tags=python
+changelog=0.2.0
+    - English interface; documentation in English and Russian
+    - Library of class profiles: several classes held in the project at once
+    - Typicality assessment: six metrics, adjustable weights and thresholds
+    - Batch run over a layer, and a class separability matrix
+    - JSON v2 export (one record per feature) and import of assessments back
+    - Chunked raster reading: large features no longer exhaust memory
+    - New plugin icon; the toolbar button is no longer blank
+    0.1
+    - Initial version: per-feature spectra and band histograms
 
-homepage=http://homepage
+tags=raster,vector,remote sensing,spectral,classification,statistics,typicality,mahalanobis,sam,land cover
+
 category=Vector
 icon=icon.png
-# experimental flag
+
 experimental=True
-
-# deprecated flag (applies to the whole plugin, not just a single version)
 deprecated=False
-
-# Since QGIS 3.8, a comma separated list of plugins to be installed
-# (or upgraded) can be specified.
-# Check the documentation for more information.
-# plugin_dependencies=
-
-Category of the plugin: Raster, Vector, Database or Web
-# category=
-
-# If the plugin can run on QGIS Server.
 server=False
-

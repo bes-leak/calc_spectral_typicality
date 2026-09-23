@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>SpectralCharecteristicsDockWidgetBase</class>
- <widget class="QDockWidget" name="SpectralCharecteristicsDockWidgetBase">
+ <class>SpectralCharacteristicsDockWidgetBase</class>
+ <widget class="QDockWidget" name="SpectralCharacteristicsDockWidgetBase">
   <property name="enabled">
    <bool>true</bool>
   </property>
@@ -23,7 +23,7 @@
    <enum>Qt::LeftToRight</enum>
   </property>
   <property name="windowTitle">
-   <string>Calculate Spectral Charecteristic</string>
+   <string>Calculate Spectral Characteristic</string>
   </property>
   <widget class="QWidget" name="widget_plot">
    <layout class="QGridLayout" name="gridLayout">

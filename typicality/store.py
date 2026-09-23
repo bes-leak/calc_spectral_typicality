@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 store.py
-Хранилище оценок типичности.
+Storage for typicality assessments.
 
-Оценки живут в свойствах проекта (QgsProject.writeEntry): сохраняются вместе
-с .qgz, не требуют редактируемого векторного слоя и не меняют исходные данные.
-Источником истины при обмене остаётся JSON-экспорт — отсюда to_json/from_json.
+Assessments live in project properties (QgsProject.writeEntry): they are saved
+alongside the .qgz, need no editable vector layer and do not alter the source
+data. The JSON export remains the source of truth for exchange, hence
+to_json/from_json.
 
-Ключ объекта: значение поля-идентификатора, если оно задано, иначе feature id.
-fid у файловых слоёв — это номер записи: он поедет, если слой пересохранить с
-другой сортировкой, поэтому поле-идентификатор предпочтительнее.
+Feature key: the value of the identifier field if one is configured, otherwise
+the feature id. For file-based layers the fid is a record number: it shifts if
+the layer is re-saved in a different order, so an identifier field is preferable.
 """
 
 import json
@@ -30,8 +31,8 @@ def _now():
 
 def feature_key(feature, id_field=None):
     """
-    Ключ объекта: значение id_field (если задано и непустое) либо fid.
-    Всегда строка — JSON не умеет нестроковые ключи.
+    Feature key: the id_field value (when configured and non-empty), else the fid.
+    Always a string, since JSON has no non-string keys.
     """
     if id_field:
         try:
@@ -45,11 +46,11 @@ def feature_key(feature, id_field=None):
 
 def layer_source_key(layer):
     """
-    Устойчивый ключ слоя — его источник.
+    A stable key for a layer: its source.
 
-    layer.id() в QGIS генерируется заново при каждом добавлении слоя в проект,
-    поэтому переоткрытый или пересозданный слой теряет привязанные к нему
-    настройки и оценки. Источник (путь к файлу) переживает это.
+    QGIS regenerates layer.id() every time a layer is added to a project, so a
+    reopened or recreated layer loses the settings and assessments attached to
+    it. The source (the file path) survives that.
     """
     try:
         source = layer.publicSource() or layer.source() or ""
@@ -59,7 +60,7 @@ def layer_source_key(layer):
 
 
 def _is_null(value):
-    """QVariant NULL приходит по-разному в разных сборках QGIS."""
+    """A QVariant NULL arrives differently in different QGIS builds."""
     if value is None:
         return True
     is_null = getattr(value, "isNull", None)
@@ -73,12 +74,12 @@ def _is_null(value):
 
 class TypicalityStore:
     """
-    Оценки объектов + выбранное поле-идентификатор, с записью в проект.
+    Feature assessments plus the chosen identifier field, persisted in the project.
 
-    Формат записи: {"version": 1,
+    Record layout: {"version": 1,
                     "records":      {layer_id: {feature_key: record}},
-                    "id_fields":    {layer_id: "поле-ключ объекта"},
-                    "class_fields": {layer_id: "поле класса объекта"}}
+                    "id_fields":    {layer_id: "feature key field"},
+                    "class_fields": {layer_id: "feature class field"}}
     """
 
     PAYLOAD_VERSION = 1
@@ -88,15 +89,15 @@ class TypicalityStore:
         self._data = {}
         self._id_fields = {}
         self._class_fields = {}
-        self._sources = {}          # layer_id → источник, для переноса настроек
+        self._sources = {}          # layer_id -> source, used to carry settings over
         self.reload()
 
     # ------------------------------------------------------------------
-    # Персистентность
+    # Persistence
     # ------------------------------------------------------------------
 
     def reload(self):
-        """Перечитать из проекта (вызывать после открытия другого проекта)."""
+        """Re-read from the project (call this after another project is opened)."""
         self._data, self._id_fields, self._class_fields = {}, {}, {}
         self._sources = {}
         raw, ok = self.project.readEntry(SCOPE, ENTRY)
@@ -113,11 +114,11 @@ class TypicalityStore:
             self._id_fields = data.get("id_fields") or {}
             self._class_fields = data.get("class_fields") or {}
             self._sources = data.get("sources") or {}
-        else:                       # ранняя раскладка: сразу {layer_id: {...}}
+        else:                       # early layout: {layer_id: {...}} at the top level
             self._data = data
 
     def flush(self):
-        """Записать в проект (проект помечается изменённым)."""
+        """Write into the project (which is marked as modified)."""
         if self._data or self._id_fields or self._class_fields:
             payload = {
                 "version": self.PAYLOAD_VERSION,
@@ -131,11 +132,11 @@ class TypicalityStore:
             self.project.removeEntry(SCOPE, ENTRY)
 
     # ------------------------------------------------------------------
-    # Привязка к слою
+    # Binding to a layer
     # ------------------------------------------------------------------
 
     def remember_layer(self, layer):
-        """Запомнить источник слоя, чтобы пережить смену его id."""
+        """Remember the layer source so a change of its id can be survived."""
         key = layer_source_key(layer)
         if not key:
             return False
@@ -147,12 +148,12 @@ class TypicalityStore:
 
     def adopt_layer(self, layer):
         """
-        Перенести настройки и оценки со старого id того же источника.
+        Carry settings and assessments over from an older id of the same source.
 
-        Иначе переоткрытый слой выглядит как совершенно новый: поле класса
-        сбрасывается (и все объекты становятся «без класса»), поле-ключ тоже,
-        а проставленные оценки остаются висеть под прежним идентификатором.
-        Возвращает id, с которого перенесли, либо None.
+        Otherwise a reopened layer looks brand new: the class field is reset (and
+        every feature becomes "no class"), the key field too, and the assessments
+        already made stay stranded under the former identifier.
+        Returns the id they were moved from, or None.
         """
         layer_id, key = layer.id(), layer_source_key(layer)
         if not key:
@@ -166,8 +167,8 @@ class TypicalityStore:
         for old_id, old_key in list(self._sources.items()):
             if old_id == layer_id or old_key != key:
                 continue
-            # переносим только с слоя, которого в проекте уже нет —
-            # иначе один и тот же файл, открытый дважды, растащит настройки
+            # only carry over from a layer that is no longer in the project, or the same
+            # file opened twice would pull the settings apart
             if self.project.mapLayer(old_id) is not None:
                 continue
             if self._move_layer(old_id, layer_id, key):
@@ -189,18 +190,18 @@ class TypicalityStore:
         return moved
 
     # ------------------------------------------------------------------
-    # Поле-идентификатор
+    # Identifier field
     # ------------------------------------------------------------------
 
     def id_field(self, layer_id):
-        """Поле, по которому строятся ключи объектов слоя (None — по fid)."""
+        """The field feature keys are built from (None - use the fid)."""
         return self._id_fields.get(layer_id) or None
 
     def set_id_field(self, layer_id, field_name):
         """
-        Сменить поле-идентификатор. Уже проставленные оценки привязаны к старым
-        ключам, поэтому вызывающий код должен решить, что с ними делать —
-        здесь мы только сохраняем выбор.
+        Change the identifier field. Assessments already made are bound to the old
+        keys, so the caller has to decide what to do with them; all that happens
+        here is that the choice is stored.
         """
         if field_name:
             self._id_fields[layer_id] = str(field_name)
@@ -210,15 +211,15 @@ class TypicalityStore:
         return self.id_field(layer_id)
 
     def key_for(self, layer_id, feature):
-        """Ключ объекта с учётом настроенного для слоя поля-идентификатора."""
+        """Feature key, honouring the identifier field configured for the layer."""
         return feature_key(feature, self.id_field(layer_id))
 
     # ------------------------------------------------------------------
-    # Поле класса
+    # Class field
     # ------------------------------------------------------------------
 
     def class_field(self, layer_id):
-        """Поле, в котором лежит класс объекта (None — не задано)."""
+        """The field holding the feature's class (None - not configured)."""
         return self._class_fields.get(layer_id) or None
 
     def set_class_field(self, layer_id, field_name):
@@ -230,7 +231,7 @@ class TypicalityStore:
         return self.class_field(layer_id)
 
     def class_of(self, layer_id, feature):
-        """Значение поля класса у объекта или None."""
+        """The feature's class field value, or None."""
         field = self.class_field(layer_id)
         if not field:
             return None
@@ -244,27 +245,27 @@ class TypicalityStore:
         return text or None
 
     # ------------------------------------------------------------------
-    # Чтение / запись оценок
+    # Reading and writing assessments
     # ------------------------------------------------------------------
 
     def get(self, layer_id, key):
-        """Запись об объекте или None."""
+        """The record for a feature, or None."""
         return self._data.get(layer_id, {}).get(str(key))
 
     def value(self, layer_id, key):
-        """Только оценка 1/2/3 или None."""
+        """Just the 1/2/3 assessment, or None."""
         record = self.get(layer_id, key)
         return normalize_value(record.get("value")) if record else None
 
     def set(self, layer_id, key, value, source=MANUAL, details=None, flush=True):
         """
-        Проставить оценку. value=None означает «не указано» и удаляет запись,
-        чтобы в проекте не копились пустышки.
+        Set an assessment. value=None means "not set" and removes the record, so
+        that empty entries do not pile up in the project.
 
-        flush=False — для пакетной записи: каждый flush() сериализует ВЕСЬ
-        словарь оценок и пишет его в проект, поэтому запись по одной даёт
-        квадратичное время (на 300 объектах это уже 3 мс на запись и растёт).
-        Вызывающий код обязан сам позвать flush() в конце.
+        flush=False is for bulk writes: every flush() serializes the ENTIRE
+        assessment dictionary and writes it into the project, so writing one at a
+        time is quadratic (at 300 features that is already 3 ms per write, and
+        growing). The caller must then call flush() itself at the end.
         """
         value = normalize_value(value)
         key = str(key)
@@ -281,7 +282,7 @@ class TypicalityStore:
         return record
 
     def set_many(self, layer_id, keys, value, source=MANUAL, details=None):
-        """Одна оценка на несколько объектов. Возвращает число изменённых."""
+        """One assessment applied to several features. Returns how many changed."""
         count = 0
         for key in keys:
             value_norm = normalize_value(value)
@@ -300,7 +301,7 @@ class TypicalityStore:
         return count
 
     def clear(self, layer_id, key, flush=True):
-        """Убрать оценку («не указано»)."""
+        """Clear the assessment ("not set")."""
         removed = self._data.get(layer_id, {}).pop(str(key), None)
         self._cleanup(layer_id)
         if flush:
@@ -308,11 +309,11 @@ class TypicalityStore:
         return removed is not None
 
     def keys_for(self, layer_id):
-        """Множество ключей, под которыми есть оценки."""
+        """The set of keys that carry an assessment."""
         return set(self._data.get(layer_id, {}))
 
     def for_layer(self, layer_id):
-        """{feature_key: record} — копия, менять снаружи безопасно."""
+        """{feature_key: record} - a copy, safe to modify from outside."""
         return dict(self._data.get(layer_id, {}))
 
     def remove_layer(self, layer_id):
@@ -325,7 +326,7 @@ class TypicalityStore:
         return removed
 
     def counts(self, layer_id):
-        """{1: n1, 2: n2, 3: n3} — сводка по слою."""
+        """{1: n1, 2: n2, 3: n3} - a summary for the layer."""
         result = {}
         for record in self._data.get(layer_id, {}).values():
             value = normalize_value(record.get("value"))
@@ -338,7 +339,7 @@ class TypicalityStore:
             del self._data[layer_id]
 
     # ------------------------------------------------------------------
-    # Обмен с JSON-экспортом
+    # Exchange with the JSON export
     # ------------------------------------------------------------------
 
     def to_json(self):
@@ -346,9 +347,9 @@ class TypicalityStore:
 
     def import_records(self, layer_id, records, overwrite=True):
         """
-        Загрузить оценки (например из ранее выгруженного JSON).
+        Load assessments (from a previously exported JSON, for instance).
         records: {feature_key: record | value}
-        Возвращает число применённых записей.
+        Returns the number of records applied.
         """
         target = self._data.setdefault(layer_id, {})
         count = 0

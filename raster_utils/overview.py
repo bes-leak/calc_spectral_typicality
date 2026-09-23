@@ -1,17 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 overview.py
-Обзорная выборка по ВСЕМУ растру — для гистограммы распределения каналов слоя.
+Overview sampling across the WHOLE raster, for the band distribution histogram.
 
-Раньше здесь использовался QgsRasterLayer.as_numpy(): он читает растр целиком,
-то есть для сцены Sentinel/Landsat это гигабайты в оперативной памяти, да ещё и
-навсегда (результат кешировался). Здесь вместо этого читается децимированная
-выборка: провайдеру запрашивается блок уменьшенного размера, и GDAL сам берёт
-обзорный уровень (overview), если он есть.
+This used to call QgsRasterLayer.as_numpy(), which reads the raster in full:
+for a Sentinel/Landsat scene that means gigabytes of RAM, and permanently so,
+since the result was cached. A decimated sample is read instead: the provider is
+asked for a reduced-size block, and GDAL picks an overview level if one exists.
 
-Выборка ПРИБЛИЖЁННАЯ — это статистика формы распределения по слою, а не точный
-подсчёт по каждому пикселю. Для попиксельного анализа объектов используйте
-sample_raster() из extract_rectangle.py.
+The sample is APPROXIMATE - it describes the shape of the layer-wide
+distribution, not an exact per-pixel count. For per-pixel analysis of features
+use sample_raster() from extract_rectangle.py.
 """
 
 import math
@@ -22,13 +21,13 @@ from .block_io import block_to_array, mask_source_nodata
 
 _NOOP = lambda msg, pct=None: None
 
-# ~2 млн пикселей на канал: гистограмма от этого уже неотличима от полной,
-# а память и время остаются в разумных пределах.
+# ~2M pixels per band: the histogram is already indistinguishable from the full
+# one, while memory and time stay within reason.
 DEFAULT_MAX_PIXELS = 2_000_000
 
 
 def decimated_grid_size(x_size: int, y_size: int, max_pixels: int = DEFAULT_MAX_PIXELS):
-    """Размер обзорной сетки (ncols, nrows) с сохранением пропорций."""
+    """Overview grid size (ncols, nrows), preserving the aspect ratio."""
     if x_size <= 0 or y_size <= 0:
         return None
     total = x_size * y_size
@@ -40,10 +39,10 @@ def decimated_grid_size(x_size: int, y_size: int, max_pixels: int = DEFAULT_MAX_
 
 def iter_overview_bands(raster_layer, max_pixels: int = DEFAULT_MAX_PIXELS, progress=_NOOP):
     """
-    Генератор (band_name, values) по всем каналам растра.
+    Generator of (band_name, values) over every band of the raster.
 
-    Массив каждого канала отдаётся и освобождается по одному — в памяти
-    единовременно живёт только один канал. Значения NoData отброшены.
+    Each band array is yielded and released one at a time, so only a single band
+    is resident at any moment. NoData values are dropped.
     """
     if raster_layer is None:
         return
@@ -65,7 +64,7 @@ def iter_overview_bands(raster_layer, max_pixels: int = DEFAULT_MAX_PIXELS, prog
         except Exception:
             name = f"Band {band_idx}"
 
-        progress(f"Чтение {name}…", (i / max(n_bands, 1)) * 100)
+        progress(f"Reading {name}…", (i / max(n_bands, 1)) * 100)
 
         block = provider.block(band_idx, extent, ncols, nrows)
         arr = block_to_array(block)
@@ -79,4 +78,4 @@ def iter_overview_bands(raster_layer, max_pixels: int = DEFAULT_MAX_PIXELS, prog
         if values.size:
             yield name, values
 
-    progress("Готово", 100)
+    progress("Done", 100)

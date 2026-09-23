@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 auto_dialog.py
-Диалог автоопределения типичности: метрики, веса, пороги, разложение вердикта.
+The automatic typicality dialog: metrics, weights, thresholds and a breakdown of
+the verdict.
 
-Метрики считаются ОДИН раз при открытии (это дорогая часть — проход по всем
-пикселям объекта), дальше изменение весов, порогов и способа свёртки меняет
-только агрегацию, поэтому окно откликается мгновенно.
+The metrics are computed ONCE when the window opens (that is the expensive part,
+a pass over every pixel of the feature); after that, changing weights,
+thresholds or the aggregation mode only redoes the aggregation, so the window
+responds instantly.
 """
 
 from qgis.PyQt.QtCore import Qt
@@ -30,18 +32,18 @@ _DASH = "—"
 
 
 class AutoTypicalityDialog(QDialog):
-    """Показывает расчёт и возвращает выбранную оценку."""
+    """Shows the calculation and returns the chosen assessment."""
 
     def __init__(self, profile, candidate, parent=None, weights=None,
                  thresholds=None, mode=MODE_SUM, object_label=""):
         super().__init__(parent)
-        self.setWindowTitle("Автоопределение типичности")
+        self.setWindowTitle("Automatic typicality")
         self.profile = profile
         self.weights = dict(weights or DEFAULT_WEIGHTS)
         self.thresholds = tuple(thresholds or DEFAULT_THRESHOLDS)
         self.result = None
 
-        # дорогая часть — один раз
+        # the expensive part, done once
         self.metric_results, self.base_notes, self.candidate = run_metrics(profile, candidate)
 
         layout = QVBoxLayout(self)
@@ -56,8 +58,8 @@ class AutoTypicalityDialog(QDialog):
         layout.addWidget(self.label_notes)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        buttons.button(QDialogButtonBox.Ok).setText("Применить оценку")
-        buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
+        buttons.button(QDialogButtonBox.Ok).setText("Apply assessment")
+        buttons.button(QDialogButtonBox.Cancel).setText("Cancel")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -66,23 +68,23 @@ class AutoTypicalityDialog(QDialog):
         self.recalculate()
 
     # ------------------------------------------------------------------
-    # Сборка
+    # Building the UI
     # ------------------------------------------------------------------
 
     def _build_header(self, object_label):
-        text = (f"Эталон «{self.profile.name}»: {self.profile.n_pixels} пикс., "
-                f"{self.profile.k} канал(ов)\n"
-                f"Объект {object_label}: {self.candidate.n} пикс.")
+        text = (f"Profile \"{self.profile.name}\": {self.profile.n_pixels} px, "
+                f"{self.profile.k} band(s)\n"
+                f"Feature {object_label}: {self.candidate.n} px")
         label = QLabel(text, self)
         label.setStyleSheet("font-weight: bold;")
         return label
 
     def _build_metrics_table(self):
-        group = QGroupBox("Метрики", self)
+        group = QGroupBox("Metrics", self)
         grid = QGridLayout(group)
         grid.setVerticalSpacing(3)
 
-        headers = ("Метрика", "Вес", "Значение", "Похожесть", "Вклад")
+        headers = ("Metric", "Weight", "Value", "Similarity", "Contribution")
         for column, title in enumerate(headers):
             header = QLabel(f"<b>{title}</b>", group)
             grid.addWidget(header, 0, column)
@@ -129,7 +131,7 @@ class AutoTypicalityDialog(QDialog):
         return group
 
     def _build_settings(self, mode):
-        group = QGroupBox("Пороги и свёртка", self)
+        group = QGroupBox("Thresholds and aggregation", self)
         grid = QGridLayout(group)
 
         self.spin_high = QDoubleSpinBox(group)
@@ -142,9 +144,9 @@ class AutoTypicalityDialog(QDialog):
             spin.setValue(value)
             spin.valueChanged.connect(self.recalculate)
 
-        grid.addWidget(QLabel("1 — типичный при score ≥", group), 0, 0)
+        grid.addWidget(QLabel("1 - typical when score >=", group), 0, 0)
         grid.addWidget(self.spin_high, 0, 1)
-        grid.addWidget(QLabel("2 — сомнительный при score ≥", group), 1, 0)
+        grid.addWidget(QLabel("2 - doubtful when score >=", group), 1, 0)
         grid.addWidget(self.spin_low, 1, 1)
 
         self.combo_mode = QComboBox(group)
@@ -153,10 +155,10 @@ class AutoTypicalityDialog(QDialog):
         index = self.combo_mode.findData(mode)
         self.combo_mode.setCurrentIndex(index if index >= 0 else 0)
         self.combo_mode.setToolTip(
-            "Сумма: метрики компенсируют друг друга.\n"
-            "Произведение: достаточно одной метрики «против», чтобы уронить оценку.")
+            "Sum: the metrics compensate for one another.\n"
+            "Product: one dissenting metric is enough to sink the assessment.")
         self.combo_mode.currentIndexChanged.connect(self.recalculate)
-        grid.addWidget(QLabel("Свёртка:", group), 2, 0)
+        grid.addWidget(QLabel("Aggregation:", group), 2, 0)
         grid.addWidget(self.combo_mode, 2, 1)
         grid.setColumnStretch(0, 1)
         return group
@@ -172,7 +174,7 @@ class AutoTypicalityDialog(QDialog):
         return frame
 
     # ------------------------------------------------------------------
-    # Расчёт
+    # Calculation
     # ------------------------------------------------------------------
 
     def current_weights(self):
@@ -181,7 +183,7 @@ class AutoTypicalityDialog(QDialog):
 
     def current_thresholds(self):
         high, low = self.spin_high.value(), self.spin_low.value()
-        if low > high:                      # не даём порогам перепутаться местами
+        if low > high:                      # keep the thresholds from swapping places
             low = high
         return high, low
 
@@ -194,7 +196,7 @@ class AutoTypicalityDialog(QDialog):
         self.recalculate()
 
     def recalculate(self):
-        """Пересобрать вердикт из уже посчитанных метрик."""
+        """Rebuild the verdict from the metrics already computed."""
         self.weights = self.current_weights()
         self.thresholds = self.current_thresholds()
         self.result = aggregate(self.metric_results, self.weights, self.thresholds,
@@ -213,7 +215,7 @@ class AutoTypicalityDialog(QDialog):
             self.labels_note[key].setText(result.note)
 
         if self.result.score is None:
-            self.label_verdict.setText("Оценка не посчитана — включите хотя бы одну метрику")
+            self.label_verdict.setText("No assessment computed - enable at least one metric")
             self.button_ok.setEnabled(False)
         else:
             self.label_verdict.setText(
@@ -227,7 +229,7 @@ class AutoTypicalityDialog(QDialog):
     # ------------------------------------------------------------------
 
     def settings(self):
-        """Настройки, которые стоит запомнить до следующего вызова."""
+        """The settings worth remembering until the next invocation."""
         return {"weights": dict(self.weights),
                 "thresholds": list(self.thresholds),
                 "mode": self.current_mode()}

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <!-- Land parcel outline: the vector object being sampled -->
+  <path d="M 6 21 L 27 5 L 58 12 L 55 50 L 21 60 Z"
+        fill="#F2F7FC" fill-opacity="0.92"
+        stroke="#1F4E79" stroke-width="4.5"
+        stroke-linejoin="round"/>
+  <!-- Per-band bars: the spectral signature measured inside the parcel -->
+  <g>
+    <rect x="18" y="37" width="7" height="12" rx="1.6" fill="#2D7DD2"/>
+    <rect x="27" y="30" width="7" height="19" rx="1.6" fill="#35A853"/>
+    <rect x="36" y="34" width="7" height="15" rx="1.6" fill="#E03B3B"/>
+    <rect x="45" y="21" width="7" height="28" rx="1.6" fill="#7B4FC9"/>
+  </g>
+  <!-- Signature curve linking the band tops -->
+  <polyline points="21.5,37 30.5,30 39.5,34 48.5,21"
+            fill="none" stroke="#1F4E79" stroke-width="2.6"
+            stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#1F4E79">
+    <circle cx="21.5" cy="37" r="2.4"/>
+    <circle cx="30.5" cy="30" r="2.4"/>
+    <circle cx="39.5" cy="34" r="2.4"/>
+    <circle cx="48.5" cy="21" r="2.4"/>
+  </g>
+</svg>

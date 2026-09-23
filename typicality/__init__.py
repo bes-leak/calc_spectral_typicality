@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Оценка типичности принадлежности объекта к классу.
+Typicality of a feature's membership in its class.
 
-Шкала (согласована 28.07.2026): 1 — типичный, 3 — нетипичный, None — не указано.
-Меньше значение — увереннее принадлежность классу.
+Scale: 1 - typical, 3 - atypical, None - not set.
+The lower the value, the more confident the membership.
 """
 
 TYPICAL = 1
@@ -13,16 +13,16 @@ ATYPICAL = 3
 VALUES = (TYPICAL, DOUBTFUL, ATYPICAL)
 
 LABELS = {
-    TYPICAL: "типичный",
-    DOUBTFUL: "сомнительный",
-    ATYPICAL: "нетипичный",
-    None: "не указано",
+    TYPICAL: "typical",
+    DOUBTFUL: "doubtful",
+    ATYPICAL: "atypical",
+    None: "not set",
 }
 
 
 def label_for(value):
-    """Человекочитаемое название оценки."""
-    return LABELS.get(value, "не указано")
+    """Human-readable name of the assessment."""
+    return LABELS.get(value, "not set")
 
 
 def is_valid(value):
@@ -30,7 +30,7 @@ def is_valid(value):
 
 
 def normalize(value):
-    """Привести значение к 1/2/3/None, отбросив мусор."""
+    """Coerce a value to 1/2/3/None, discarding anything else."""
     if value is None:
         return None
     try:

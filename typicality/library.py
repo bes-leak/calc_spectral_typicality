@@ -1,12 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 library.py
-Библиотека эталонов: несколько именованных профилей классов одновременно.
+Profile library: several named class profiles held at once.
 
-Один активный эталон не годится, когда в слое десяток-другой классов: перед
-каждой проверкой пришлось бы вручную подгружать нужный файл, и одна ошибка
-означала бы молча посчитанную оценку против чужого класса. Здесь профили лежат
-в проекте все сразу, а нужный выбирается по значению поля класса у объекта.
+A single active profile does not scale to a layer with a dozen or more classes:
+the right file would have to be loaded by hand before every check, and one
+mistake would silently score a feature against the wrong class. Here all the
+profiles live in the project together, and the right one is picked by the
+feature's class field value.
 """
 
 import json
@@ -15,14 +16,14 @@ from .profile import ClassProfile
 
 PROJECT_SCOPE = "calc_sp_ch"
 PROJECT_ENTRY = "class_profiles"
-LEGACY_ENTRY = "class_profile"      # одиночный эталон ранних версий
+LEGACY_ENTRY = "class_profile"      # single profile from early versions
 
 FORMAT = "calc_sp_ch/class-library"
 VERSION = 1
 
 
 class ProfileLibrary:
-    """{имя класса: ClassProfile} с записью в проект."""
+    """{class name: ClassProfile}, persisted into the project."""
 
     def __init__(self, project):
         self.project = project
@@ -31,7 +32,7 @@ class ProfileLibrary:
         self.reload()
 
     # ------------------------------------------------------------------
-    # Персистентность
+    # Persistence
     # ------------------------------------------------------------------
 
     def reload(self):
@@ -57,7 +58,7 @@ class ProfileLibrary:
             self._active = next(iter(self._profiles), None)
 
     def _migrate_legacy(self):
-        """Одиночный эталон старых версий → библиотека из одного профиля."""
+        """An old-style single profile -> a library holding one profile."""
         raw, ok = self.project.readEntry(PROJECT_SCOPE, LEGACY_ENTRY)
         if not ok or not raw:
             return
@@ -82,14 +83,14 @@ class ProfileLibrary:
                                 json.dumps(payload, ensure_ascii=False))
 
     # ------------------------------------------------------------------
-    # Доступ
+    # Access
     # ------------------------------------------------------------------
 
     def names(self):
         return sorted(self._profiles)
 
     def options(self):
-        """[(подпись для интерфейса, имя класса)] — подписи из легенды слоя."""
+        """[(display label, class name)] - labels taken from the layer legend."""
         return [(self._profiles[name].title, name) for name in self.names()]
 
     def title(self, name):
@@ -123,7 +124,7 @@ class ProfileLibrary:
         return self._active
 
     def add(self, profile, make_active=True):
-        """Добавить или заменить профиль (ключ — имя класса)."""
+        """Add or replace a profile (keyed by class name)."""
         self._profiles[profile.name] = profile
         if make_active or self._active is None:
             self._active = profile.name
@@ -144,7 +145,7 @@ class ProfileLibrary:
         self.flush()
 
     # ------------------------------------------------------------------
-    # Файлы
+    # Files
     # ------------------------------------------------------------------
 
     def to_dict(self):
@@ -157,25 +158,25 @@ class ProfileLibrary:
         }
 
     def save(self, path):
-        """Сохранить всю библиотеку в один файл."""
+        """Save the whole library into a single file."""
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.to_dict(), f, ensure_ascii=False, indent=2)
         return path
 
     def load(self, path, merge=True):
         """
-        Загрузить файл библиотеки ИЛИ одиночного профиля — формат определяется
-        по полю "format". Возвращает список загруженных имён.
+        Load a library file OR a single-profile file; the format is detected
+        from the "format" field. Returns the list of names loaded.
         """
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         if not isinstance(data, dict):
-            raise ValueError("файл не похож на эталон класса")
+            raise ValueError("this file does not look like a class profile")
 
         if data.get("format") == FORMAT or "profiles" in data:
             payload = data.get("profiles") or {}
             if not payload:
-                raise ValueError("в файле нет ни одного профиля")
+                raise ValueError("the file contains no profiles")
             if not merge:
                 self._profiles, self._active = {}, None
             loaded = []
@@ -187,13 +188,13 @@ class ProfileLibrary:
                 self._profiles[profile.name] = profile
                 loaded.append(profile.name)
             if not loaded:
-                raise ValueError("не удалось прочитать ни одного профиля")
+                raise ValueError("not a single profile could be read")
             active = data.get("active")
             self._active = active if active in self._profiles else loaded[0]
             self.flush()
             return loaded
 
-        profile = ClassProfile.from_dict(data)      # одиночный профиль
+        profile = ClassProfile.from_dict(data)      # single profile
         if not merge:
             self._profiles, self._active = {}, None
         self.add(profile)
@@ -202,15 +203,15 @@ class ProfileLibrary:
     # ------------------------------------------------------------------
 
     def summary(self):
-        """Короткая сводка для интерфейса."""
+        """A short summary for the interface."""
         if not self._profiles:
-            return "Эталонов нет"
+            return "No class profiles"
         profile = self.active
         if profile is None:
-            return f"Эталонов: {len(self._profiles)}"
-        text = f"{profile.title}: {profile.n_pixels} пикс., {profile.k} кан."
+            return f"Class profiles: {len(self._profiles)}"
+        text = f"{profile.title}: {profile.n_pixels} px, {profile.k} bands"
         if profile.singular:
             text += " ⚠"
         if len(self._profiles) > 1:
-            text += f" (всего {len(self._profiles)})"
+            text += f" (total {len(self._profiles)})"
         return text

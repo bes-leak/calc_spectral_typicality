@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 histogram.py
-Адаптивное разбиение на бины с ограниченным объёмом работы.
+Adaptive binning with a bounded amount of work.
 
-Почему не bins='fd' напрямую:
-* при узком IQR и широком диапазоне (типично для 16-битных снимков с выбросами)
-  правило Фридмана–Диакониса даёт миллионы бинов → MemoryError;
-* уменьшение числа бинов по одному пересчитывает гистограмму по всему массиву
-  десятки/сотни раз. Здесь число бинов сразу зажато в [MIN_BINS, MAX_BINS],
-  а уменьшается геометрически — не больше ~12 проходов.
+Why not bins='fd' directly:
+* with a narrow IQR and a wide range (typical for 16-bit imagery with outliers)
+  the Freedman-Diaconis rule yields millions of bins -> MemoryError;
+* decreasing the bin count one at a time recomputes the histogram over the whole
+  array dozens or hundreds of times. Here the bin count is clamped to
+  [MIN_BINS, MAX_BINS] up front and shrinks geometrically - at most ~12 passes.
 """
 
 import numpy as np
@@ -18,7 +18,7 @@ MAX_BINS = 256
 
 
 def _suggest_bin_count(values: np.ndarray, min_bins: int, max_bins: int) -> int:
-    """Оценка числа бинов по Фридману–Диаконису с жёстким потолком."""
+    """Freedman-Diaconis bin count estimate with a hard ceiling."""
     n = values.size
     if n < 2:
         return min_bins
@@ -26,14 +26,14 @@ def _suggest_bin_count(values: np.ndarray, min_bins: int, max_bins: int) -> int:
     lo, hi = float(np.min(values)), float(np.max(values))
     span = hi - lo
     if not np.isfinite(span) or span <= 0:
-        return 1                      # все значения одинаковы
+        return 1                      # all values are identical
 
     q25, q75 = np.percentile(values, [25, 75])
     iqr = float(q75 - q25)
     width = 2.0 * iqr / (n ** (1.0 / 3.0)) if iqr > 0 else 0.0
 
     if width <= 0:
-        # вырожденное распределение (почти все значения совпадают) → Стёрджес
+        # degenerate distribution (nearly all values equal) -> Sturges
         n_bins = int(np.ceil(np.log2(n) + 1))
     else:
         estimated = span / width
@@ -48,14 +48,14 @@ def _suggest_bin_count(values: np.ndarray, min_bins: int, max_bins: int) -> int:
 def histogram(values, max_zeros: int = 0, step: int = 1,
               min_bins: int = MIN_BINS, max_bins: int = MAX_BINS):
     """
-    Гистограмма с подбором числа бинов.
+    Histogram with an automatically chosen bin count.
 
-    max_zeros : сколько пустых бинов допустимо; пока их больше — число бинов
-                уменьшается.
-    step      : минимальный шаг уменьшения (сохранён для совместимости);
-                фактический шаг — max(step, 25% от текущего числа бинов).
+    max_zeros : how many empty bins are tolerated; while there are more, the bin
+                count keeps shrinking.
+    step      : minimum shrink step (kept for compatibility); the effective step
+                is max(step, 25% of the current bin count).
 
-    Returns (counts, edges) — как np.histogram.
+    Returns (counts, edges), same as np.histogram.
     """
     values = np.asarray(values, dtype=np.float64).ravel()
     values = values[np.isfinite(values)]

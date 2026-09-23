@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 batch.py
-Пакетная оценка типичности: прогон по объектам слоя с эталоном своего класса.
+Batch typicality assessment: a run over the features of a layer, each against
+the profile of its own class.
 
-Здесь нет ничего от QGIS — доступ к геометрии и растру передаётся колбэками.
-Так ядро прогона проверяется без карты и без интерфейса, а контроллер отвечает
-только за диалоги и прогресс.
+There is nothing QGIS-specific here - access to geometry and raster is passed in
+as callbacks. That way the core of the run can be tested without a map and
+without an interface, and the controller is left responsible only for dialogs
+and progress.
 """
 
 import csv
@@ -17,18 +19,18 @@ from . import label_for
 from .metrics import METRIC_ORDER, MODE_SUM, aggregate, run_metrics
 from .profile import SpectralStats
 
-SKIP_NO_PROFILE = "нет эталона для класса"
-SKIP_NO_PIXELS = "нет пикселей растра"
-SKIP_MANUAL = "оценка проставлена вручную"
-SKIP_INCOMPATIBLE = "эталон не подходит к растру"
+SKIP_NO_PROFILE = "no profile for this class"
+SKIP_NO_PIXELS = "no raster pixels"
+SKIP_MANUAL = "assessed manually"
+SKIP_INCOMPATIBLE = "the profile does not fit the raster"
 
 
 class BatchReport:
-    """Результат прогона: строки по объектам и сводка."""
+    """The result of a run: per-feature rows plus a summary."""
 
     def __init__(self):
-        self.rows = []                 # успешно оценённые
-        self.skipped = []              # [(key, class, причина)]
+        self.rows = []                 # successfully assessed
+        self.skipped = []              # [(key, class, reason)]
         self.cancelled = False
 
     # ------------------------------------------------------------------
@@ -38,7 +40,7 @@ class BatchReport:
         return len(self.rows)
 
     def counts_by_class(self):
-        """{класс: {1: n, 2: n, 3: n}}"""
+        """{class: {1: n, 2: n, 3: n}}"""
         result = {}
         for row in self.rows:
             bucket = result.setdefault(row["class"] or "—", {})
@@ -54,14 +56,14 @@ class BatchReport:
     def summary_text(self):
         lines = []
         if self.cancelled:
-            lines.append("⚠ Прогон прерван пользователем.")
-        lines.append(f"Оценено объектов: {self.processed}")
+            lines.append("Run cancelled by the user.")
+        lines.append(f"Features assessed: {self.processed}")
         for class_name, counts in sorted(self.counts_by_class().items()):
             parts = ", ".join(f"{value} ({label_for(value)}): {counts[value]}"
                               for value in sorted(counts))
             lines.append(f"  • {class_name}: {parts}")
         if self.skipped:
-            lines.append(f"Пропущено: {len(self.skipped)}")
+            lines.append(f"Skipped: {len(self.skipped)}")
             for reason, count in sorted(self.skip_reasons().items()):
                 lines.append(f"  • {reason}: {count}")
         return "\n".join(lines)
@@ -92,9 +94,9 @@ class BatchReport:
 
     def write_csv(self, path, delimiter=";"):
         """
-        CSV для таблиц в работе. utf-8-sig и «;» — чтобы русский Excel открыл
-        файл без плясок с кодировкой и разбил по столбцам.
-        В pandas: pd.read_csv(path, sep=';')
+        CSV for downstream work. utf-8-sig and ";" so that a localized Excel
+        opens the file without an encoding dance and splits it into columns.
+        In pandas: pd.read_csv(path, sep=';')
         """
         with open(path, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f, delimiter=delimiter)
@@ -107,16 +109,16 @@ class BatchReport:
 def run_batch(items, profile_for, sample_for, weights=None, thresholds=None,
               mode="sum", skip_key=None, progress=None, is_cancelled=None):
     """
-    Прогнать оценку по объектам.
+    Run the assessment over a set of features.
 
     items       : [(feature, key, class_name)]
-    profile_for : (feature) -> (ClassProfile | None, пояснение, класс)
+    profile_for : (feature) -> (ClassProfile | None, explanation, class)
     sample_for  : (feature) -> RasterSample | None
-    skip_key    : (key) -> причина пропуска или None (например ручная оценка)
+    skip_key    : (key) -> reason to skip, or None (a manual assessment, say)
     progress    : (index, total, key) -> None
     is_cancelled: () -> bool
 
-    Возвращает BatchReport; записью в хранилище занимается вызывающий код.
+    Returns a BatchReport; writing to the store is the caller's job.
     """
     report = BatchReport()
     total = len(items)
@@ -147,13 +149,13 @@ def run_batch(items, profile_for, sample_for, weights=None, thresholds=None,
 
         try:
             results, notes, candidate = run_metrics(profile, sample)
-        except ValueError:                       # каналы не совпали
+        except ValueError:                       # the bands did not match
             report.skipped.append((key, class_name, SKIP_INCOMPATIBLE))
             continue
 
         outcome = aggregate(results, weights, thresholds, mode, notes)
         if outcome.value is None:
-            report.skipped.append((key, class_name, "не удалось посчитать метрики"))
+            report.skipped.append((key, class_name, "the metrics could not be computed"))
             continue
 
         payload = outcome.to_dict()
@@ -178,17 +180,17 @@ def run_batch(items, profile_for, sample_for, weights=None, thresholds=None,
 
 
 # ---------------------------------------------------------------------------
-# Матрица разделимости: каждый объект против ВСЕХ эталонов
+# Separability matrix: every feature against EVERY profile
 # ---------------------------------------------------------------------------
 
-SKIP_TOO_SMALL = "меньше минимального размера"
+SKIP_TOO_SMALL = "smaller than the minimum size"
 
 
 class SeparabilityReport:
-    """Оценки каждого объекта по каждому эталону."""
+    """The score of every feature against every profile."""
 
     def __init__(self, names):
-        self.names = list(names)      # эталоны в порядке колонок
+        self.names = list(names)      # profiles in column order
         self.rows = []
         self.skipped = []
         self.cancelled = False
@@ -200,21 +202,21 @@ class SeparabilityReport:
     # ------------------------------------------------------------------
 
     def classes(self):
-        return sorted({row["class"] or "— без класса —" for row in self.rows})
+        return sorted({row["class"] or "- no class -" for row in self.rows})
 
     def matrix(self):
         """
-        (классы, эталоны, медианы score, количества объектов).
+        (classes, profiles, median scores, feature counts).
 
-        Медиана, а не среднее: распределение score сильно скошено, и один
-        объект-выброс не должен решать за весь класс.
+        Median rather than mean: the score distribution is strongly skewed, and
+        one outlying feature must not speak for a whole class.
         """
         classes = self.classes()
         medians = np.full((len(classes), len(self.names)), np.nan)
         counts = np.zeros(len(classes), dtype=int)
         for i, class_name in enumerate(classes):
             scores = [row["scores"] for row in self.rows
-                      if (row["class"] or "— без класса —") == class_name]
+                      if (row["class"] or "- no class -") == class_name]
             counts[i] = len(scores)
             if not scores:
                 continue
@@ -225,11 +227,11 @@ class SeparabilityReport:
         return classes, list(self.names), medians, counts
 
     def own_etalon_wins(self):
-        """Доля объектов, у которых свой эталон оказался лучшим, по классам."""
+        """Share of features whose own profile scored best, by class."""
         result = {}
         for class_name in self.classes():
             rows = [r for r in self.rows
-                    if (r["class"] or "— без класса —") == class_name]
+                    if (r["class"] or "- no class -") == class_name]
             usable = [r for r in rows if r["own_score"] is not None]
             if not usable:
                 result[class_name] = None
@@ -241,20 +243,20 @@ class SeparabilityReport:
     def summary_text(self):
         lines = []
         if self.cancelled:
-            lines.append("⚠ Прогон прерван пользователем.")
-        lines.append(f"Объектов посчитано: {self.processed}")
-        lines.append(f"Эталонов: {len(self.names)}")
+            lines.append("Run cancelled by the user.")
+        lines.append(f"Features computed: {self.processed}")
+        lines.append(f"Class profiles: {len(self.names)}")
         wins = self.own_etalon_wins()
         good = [(name, share) for name, share in wins.items() if share is not None]
         if good:
             lines.append("")
-            lines.append("Свой эталон оказался лучшим:")
+            lines.append("Own profile scored best:")
             for name, share in sorted(good, key=lambda item: item[1]):
                 mark = "  ⚠" if share < 0.5 else "   "
                 lines.append(f"{mark} {name}: {share:.0%}")
         if self.skipped:
             lines.append("")
-            lines.append(f"Пропущено: {len(self.skipped)}")
+            lines.append(f"Skipped: {len(self.skipped)}")
             reasons = {}
             for _, _, reason in self.skipped:
                 reasons[reason] = reasons.get(reason, 0) + 1
@@ -265,7 +267,7 @@ class SeparabilityReport:
     # ------------------------------------------------------------------
 
     def write_csv(self, path, delimiter=";"):
-        """Подробная таблица: строка на объект, колонка на эталон."""
+        """Detailed table: one row per feature, one column per profile."""
         header = (["fid", "key", "class", "n_pixels", "own_score",
                    "best_etalon", "best_score", "margin"]
                   + [f"score_{name}" for name in self.names])
@@ -281,13 +283,13 @@ class SeparabilityReport:
         return path
 
     def write_matrix_csv(self, path, delimiter=";"):
-        """Сводка: медиана score по парам «класс объектов × эталон»."""
+        """Summary: median score per (feature class x profile) pair."""
         classes, names, medians, counts = self.matrix()
         wins = self.own_etalon_wins()
         with open(path, "w", encoding="utf-8-sig", newline="") as f:
             writer = csv.writer(f, delimiter=delimiter)
-            writer.writerow(["класс_объектов", "объектов", "свой_эталон_лучший"]
-                            + [f"эталон_{name}" for name in names])
+            writer.writerow(["feature_class", "features", "own_profile_best"]
+                            + [f"profile_{name}" for name in names])
             for i, class_name in enumerate(classes):
                 share = wins.get(class_name)
                 writer.writerow([class_name, int(counts[i]), _round(share)]
@@ -309,13 +311,13 @@ def _round(value, digits=6):
 def run_separability(items, profiles, sample_for, weights=None, thresholds=None,
                      mode=MODE_SUM, min_pixels=1, progress=None, is_cancelled=None):
     """
-    Прогнать каждый объект по ВСЕМ эталонам.
+    Run every feature against EVERY profile.
 
-    Пиксели объекта читаются и сводятся в статистику ОДИН раз, дальше
-    переиспользуются для всех эталонов — иначе отдельный прогон на каждый
-    эталон повторял бы самую дорогую часть столько раз, сколько классов.
+    A feature's pixels are read and reduced to statistics ONCE and then reused
+    for all the profiles; a separate run per profile would otherwise repeat the
+    most expensive part as many times as there are classes.
 
-    profiles: {имя: ClassProfile}
+    profiles: {name: ClassProfile}
     """
     names = list(profiles)
     report = SeparabilityReport(names)
@@ -336,13 +338,13 @@ def run_separability(items, profiles, sample_for, weights=None, thresholds=None,
             report.skipped.append((key, class_name, SKIP_TOO_SMALL))
             continue
 
-        stats = SpectralStats.from_sample(sample)      # среднее и ковариация — один раз
+        stats = SpectralStats.from_sample(sample)      # mean and covariance, computed once
         scores = {}
         for name in names:
             profile = profiles[name]
             try:
                 results, notes, _ = run_metrics(profile, stats)
-            except ValueError:                          # каналы не совпали
+            except ValueError:                          # the bands did not match
                 continue
             outcome = aggregate(results, weights, thresholds, mode, notes)
             if outcome.score is not None:
@@ -364,7 +366,7 @@ def run_separability(items, profiles, sample_for, weights=None, thresholds=None,
             "own_score": own_score,
             "best_etalon": best_etalon,
             "best_score": best_score,
-            # насколько лучший чужой эталон обошёл свой: >0 — тревожный знак
+            # by how much the best foreign profile beat the own one: >0 is a warning sign
             "margin": (best_score - own_score) if own_score is not None else None,
         })
 
@@ -375,12 +377,12 @@ def run_separability(items, profiles, sample_for, weights=None, thresholds=None,
 
 def details_for_store(row, raster_name=None, profile_name=None, compact=True):
     """
-    Детали автооценки для хранилища.
+    Details of an automatic assessment, for the store.
 
-    compact=True оставляет от метрик только похожесть и вес: полная раскладка
-    (сырые значения, единицы, примечания) весит около 1.4 КБ на объект, а
-    хранилище целиком лежит внутри .qgz — на тысячах объектов это мегабайты в
-    файле проекта. Полная раскладка остаётся в CSV пакетного прогона.
+    compact=True keeps only the similarity and the weight of each metric: the
+    full breakdown (raw values, units, notes) weighs about 1.4 KB per feature,
+    and the whole store lives inside the .qgz - over thousands of features that
+    is megabytes in the project file. The full breakdown stays in the batch CSV.
     """
     details = dict(row["details"])
     if compact:
@@ -393,7 +395,7 @@ def details_for_store(row, raster_name=None, profile_name=None, compact=True):
         details.pop("notes", None)
     details["class_profile"] = profile_name or row["etalon"]
     details["object_class"] = row["class"]
-    details["profile_choice"] = f"по классу «{row['class']}»" if row["class"] else "пакетный прогон"
+    details["profile_choice"] = f"against class \"{row['class']}\"" if row["class"] else "batch run"
     details["n_pixels"] = row["n_pixels"]
     details["batch"] = True
     details["batch_at"] = datetime.now().astimezone().isoformat(timespec="seconds")

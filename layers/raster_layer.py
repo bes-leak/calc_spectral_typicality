@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
 raster_layer.py
-Кеш обзорных гистограмм растрового слоя.
+Cache of overview histograms for a raster layer.
 
-Хранятся ТОЛЬКО гистограммы (counts + edges), а не сами значения: раньше объект
-держал полный массив растра (as_numpy()) и жил до выгрузки плагина. Теперь
-объём памяти — O(число бинов), независимо от размера снимка.
+ONLY the histograms (counts + edges) are kept, never the values themselves:
+this object used to hold the full raster array (as_numpy()) and lived until the
+plugin was unloaded. Memory is now O(number of bins), whatever the scene size.
 """
 
 from ..raster_utils.histogram import histogram
@@ -15,7 +15,7 @@ _NOOP = lambda msg, pct=None: None
 
 
 class RasterLayer(object):
-    """Имя слоя + гистограммы его каналов (по децимированной выборке)."""
+    """Layer name plus the histograms of its bands (from a decimated sample)."""
 
     def __init__(self, name: str, histograms: dict, n_pixels: int = 0):
         self.name = name
@@ -26,7 +26,7 @@ class RasterLayer(object):
     @classmethod
     def from_layer(cls, qgis_layer, max_pixels: int = DEFAULT_MAX_PIXELS,
                    max_zeros: int = 20, step: int = 5, progress=_NOOP):
-        """Построить гистограммы по всему растру, не загружая его целиком."""
+        """Build histograms over the whole raster without loading it entirely."""
         histograms = {}
         n_pixels = 0
         for band_name, values in iter_overview_bands(qgis_layer, max_pixels, progress):
@@ -34,8 +34,8 @@ class RasterLayer(object):
             histograms[band_name] = histogram(values, max_zeros, step)
             del values
 
-        print(f'Растровый слой {qgis_layer.name()}: {len(histograms)} канал(ов), '
-              f'обзорная выборка {n_pixels} пикс./канал')
+        print(f'Raster layer {qgis_layer.name()}: {len(histograms)} band(s), '
+              f'overview sample {n_pixels} px/band')
         return cls(qgis_layer.name(), histograms, n_pixels)
 
     def histogram(self) -> dict:

@@ -28,7 +28,7 @@ def _point_on_segment(px, py, ax, ay, bx, by, eps):
 def geometry_to_rings_xy(geom: QgsGeometry) -> List[List[PointXY]]:
     if geom is None or geom.isEmpty():
         return []
-    # asPolygon()/asMultiPolygon() бросают ValueError на точках и линиях
+    # asPolygon()/asMultiPolygon() raise ValueError on points and lines
     if geom.type() != QgsWkbTypes.PolygonGeometry:
         return []
     rings: List[List[PointXY]] = []

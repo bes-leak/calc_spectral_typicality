@@ -1,19 +1,20 @@
 # -*- coding: utf-8 -*-
 """
 export_json.py
-Экспорт спектральных характеристик объектов в JSON (формат v2).
+Export of feature spectral characteristics to JSON (format v2).
 
-Отличия от v1: запись на КАЖДЫЙ объект вместо объединённой геометрии. Оценка
-типичности относится к объекту, поэтому объединение здесь не годится. Заодно в
-запись кладутся атрибуты объекта — это и есть «копия shp в JSON», к которой мы
-идём как к основному формату хранения.
+How it differs from v1: one record per FEATURE instead of a single dissolved
+geometry. A typicality assessment belongs to a feature, so dissolving will not
+do. Each record also carries the feature's attributes - this is the "shapefile
+copy in JSON" we are moving towards as the primary storage format.
 
-Что в записи объекта:
-  * атрибуты, центроид, контур (в CRS растра);
-  * поканальная статистика внутри объекта и в фоне (охват минус объект);
-  * вектор средних и ковариация — по ним метрики типичности можно пересчитать
-    вне QGIS;
-  * оценка типичности из хранилища (или "не указано").
+What a feature record holds:
+  * attributes, centroid, outline (in the raster CRS);
+  * per-band statistics inside the feature and in the background (extent minus
+    feature);
+  * the mean vector and covariance, so typicality metrics can be recomputed
+    outside QGIS;
+  * the typicality assessment from the store (or "not set").
 """
 
 import json
@@ -44,11 +45,11 @@ def _now():
 
 
 # ---------------------------------------------------------------------------
-# Приведение значений к JSON
+# Coercing values for JSON
 # ---------------------------------------------------------------------------
 
 def _json_safe(value):
-    """Атрибут QGIS → значение, которое переживёт json.dump."""
+    """A QGIS attribute -> a value that will survive json.dump."""
     if value is None:
         return None
     if isinstance(value, bool):
@@ -79,7 +80,7 @@ def _json_safe(value):
 
 
 def _clean(obj):
-    """Рекурсивно убрать NaN/Inf — иначе получится невалидный JSON."""
+    """Recursively strip NaN/Inf, which would otherwise produce invalid JSON."""
     if isinstance(obj, dict):
         return {k: _clean(v) for k, v in obj.items()}
     if isinstance(obj, (list, tuple)):
@@ -135,15 +136,15 @@ def _attributes(feature) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Запись об объекте
+# Feature record
 # ---------------------------------------------------------------------------
 
 def build_feature_record(feature, geom_in_raster_crs, raster_layer, key=None,
                          typicality=None, include_outside=True, progress=_NOOP):
     """
-    Одна запись JSON по объекту. Геометрия — уже в CRS растра.
-    Объект без пикселей не выбрасывается: попадает в файл с n_pixels = 0 и
-    пометкой, чтобы выгрузка оставалась полной копией слоя.
+    A single JSON record for a feature. The geometry is already in the raster CRS.
+    A feature with no pixels is not dropped: it lands in the file with
+    n_pixels = 0 and a note, so that the export stays a complete copy of the layer.
     """
     geom = geom_in_raster_crs
     notes = []
@@ -160,10 +161,10 @@ def build_feature_record(feature, geom_in_raster_crs, raster_layer, key=None,
         record["centroid"] = {"x": float(point.x()), "y": float(point.y())}
     else:
         record["centroid"] = None
-        notes.append("не удалось вычислить центроид")
+        notes.append("the centroid could not be computed")
 
     record["boundary"] = _boundary(geom)
-    # та же геометрия одной строкой: читается shapely/geopandas без сборки колец
+    # the same geometry as one string: shapely/geopandas read it without rebuilding rings
     try:
         record["geometry_wkt"] = geom.asWkt()
     except Exception:
@@ -178,7 +179,7 @@ def build_feature_record(feature, geom_in_raster_crs, raster_layer, key=None,
         inside = sample_raster(raster_layer, rect=geom.boundingBox(), mode=MODE_BBOX,
                                progress=_NOOP)
         if inside:
-            notes.append("центры пикселей не попали внутрь контура — взят охват объекта")
+            notes.append("no pixel centre fell inside the outline; the feature extent was used instead")
 
     if inside:
         stats = SpectralStats.from_sample(inside)
@@ -194,13 +195,13 @@ def build_feature_record(feature, geom_in_raster_crs, raster_layer, key=None,
         record["spectral_inside"] = {}
         record["mean_vector"] = None
         record["cov"] = None
-        notes.append("нет данных растра в пределах объекта")
+        notes.append("no raster data within the feature")
 
     if include_outside:
         outside = sample_raster(raster_layer, geom=geom, mode=MODE_OUTSIDE, progress=_NOOP)
         record["spectral_outside"] = _stats_by_band(outside)
         if not outside:
-            notes.append("фон пуст: контур занимает весь свой охват")
+            notes.append("the background is empty: the outline fills its whole extent")
 
     record["typicality"] = _typicality_block(typicality)
     if notes:
@@ -224,7 +225,7 @@ def _typicality_block(record):
 
 
 # ---------------------------------------------------------------------------
-# Экспорт
+# Export
 # ---------------------------------------------------------------------------
 
 def build_export(vector_layer, raster_layer, feature_geoms, keys=None,
@@ -232,11 +233,11 @@ def build_export(vector_layer, raster_layer, feature_geoms, keys=None,
                  id_field=None, class_field=None,
                  selection="selected", include_outside=True, progress=_NOOP):
     """
-    Собрать документ JSON v2.
+    Assemble a JSON v2 document.
 
-    feature_geoms: [(feature, geometry в CRS растра)]
-    keys:          [ключ объекта] той же длины (или None → fid)
-    typicality:    {ключ: запись из TypicalityStore}
+    feature_geoms: [(feature, geometry in the raster CRS)]
+    keys:          [feature key] of the same length (or None -> fid)
+    typicality:    {key: record from TypicalityStore}
     """
     typicality = typicality or {}
     total = max(len(feature_geoms), 1)
@@ -244,7 +245,7 @@ def build_export(vector_layer, raster_layer, feature_geoms, keys=None,
 
     for index, (feature, geom) in enumerate(feature_geoms):
         key = keys[index] if keys else str(feature.id())
-        progress(f"Объект {index + 1} из {len(feature_geoms)}", index / total * 100)
+        progress(f"Feature {index + 1} of {len(feature_geoms)}", index / total * 100)
         features.append(build_feature_record(
             feature, geom, raster_layer,
             key=key,
@@ -277,46 +278,46 @@ def build_export(vector_layer, raster_layer, feature_geoms, keys=None,
         },
         "typicality_scale": {str(k): v for k, v in
                              ((1, label_for(1)), (2, label_for(2)), (3, label_for(3)))},
-        # class_profile — активный эталон (совместимость), class_profiles — вся
-        # библиотека: с несколькими классами нужен профиль каждого
+        # class_profile is the active profile (for compatibility), class_profiles is the
+        # whole library: with several classes every profile is needed
         "class_profile": class_profile.to_dict() if class_profile is not None else None,
         "class_profiles": ({name: p.to_dict() for name, p in class_profiles.items()}
                            if class_profiles else None),
         "features": features,
     }
-    progress("Сборка JSON…", 99)
+    progress("Building JSON...", 99)
     return document
 
 
 def export_features_json(filepath, **kwargs):
-    """build_export(...) + запись в файл. Возвращает (путь, документ)."""
+    """build_export(...) plus writing to a file. Returns (path, document)."""
     progress = kwargs.get("progress", _NOOP)
     document = build_export(**kwargs)
     with open(filepath, "w", encoding="utf-8") as f:
-        # allow_nan=False: если где-то остался NaN, лучше упасть здесь,
-        # чем отдать наружу невалидный JSON
+        # allow_nan=False: if a NaN survived anywhere, better to fail here
+        # than to hand out invalid JSON
         json.dump(_clean(document), f, ensure_ascii=False, indent=2, allow_nan=False)
-    progress("Сохранено ✅", 100)
+    progress("Saved", 100)
     return filepath, document
 
 
 # ---------------------------------------------------------------------------
-# Обратная загрузка оценок
+# Reading assessments back in
 # ---------------------------------------------------------------------------
 
 def load_typicality(filepath):
     """
-    Прочитать оценки из ранее выгруженного JSON.
+    Read assessments from a previously exported JSON file.
 
-    Returns {"vector_layer", "id_field", "records": {ключ: запись}, "count"}
+    Returns {"vector_layer", "id_field", "records": {key: record}, "count"}
     """
     with open(filepath, encoding="utf-8") as f:
         data = json.load(f)
 
     if not isinstance(data, dict) or data.get("format") != FORMAT:
-        raise ValueError("это не файл спектральных характеристик calc_sp_ch")
+        raise ValueError("this is not a calc_sp_ch spectral characteristics file")
     if int(data.get("version", 0)) < 2:
-        raise ValueError("файл версии 1 (объединённая геометрия) — оценок в нём нет")
+        raise ValueError("a version 1 file (dissolved geometry) - it holds no assessments")
 
     source = data.get("source") or {}
     records = {}
@@ -335,8 +336,8 @@ def load_typicality(filepath):
     return {
         "vector_layer": source.get("vector_layer"),
         "id_field": source.get("id_field"),
-        # в JSON поле-ключ записано явно: null означает «ключи по fid»,
-        # а не «неизвестно» — в отличие от CSV
+        # the key field is explicit in JSON: null means "keys are fids",
+        # not "unknown" - unlike in CSV
         "id_field_known": True,
         "records": records,
         "count": len(records),
@@ -345,11 +346,11 @@ def load_typicality(filepath):
 
 def load_typicality_csv(filepath):
     """
-    Прочитать оценки из CSV пакетного прогона.
+    Read assessments from a batch-run CSV.
 
-    Пакет выдаёт таблицу, и попытка загрузить её обратно — естественное
-    ожидание, поэтому импорт понимает и её. Нужны колонки key (или fid) и
-    value; разделитель определяется автоматически.
+    A batch run produces a table, and trying to load it back is the natural
+    expectation, so the import understands it too. Columns key (or fid) and value
+    are required; the delimiter is detected automatically.
     """
     import csv
 
@@ -364,11 +365,11 @@ def load_typicality_csv(filepath):
         rows = list(csv.DictReader(f, dialect=dialect))
 
     if not rows:
-        raise ValueError("файл пустой")
+        raise ValueError("the file is empty")
     columns = set(rows[0])
     if "value" not in columns or not ({"key", "fid"} & columns):
-        raise ValueError("это не таблица оценок calc_sp_ch: нужны колонки "
-                         "key (или fid) и value")
+        raise ValueError("this is not a calc_sp_ch assessment table: it needs the columns "
+                         "key (or fid) and value")
 
     records = {}
     for row in rows:
@@ -395,7 +396,7 @@ def load_typicality_csv(filepath):
     return {
         "vector_layer": None,
         "id_field": None,
-        "id_field_known": False,   # в таблице поля-ключа нет — берём текущее
+        "id_field_known": False,   # the table has no key field, so use the current one
         "records": records,
         "count": len(records),
     }

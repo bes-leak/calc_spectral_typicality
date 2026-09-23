@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """
 extract_rectangle.py
-Выборка значений растра: по прямоугольнику / внутри полигона / вне полигона.
+Sampling raster values: by rectangle / inside a polygon / outside a polygon.
 
-Ключевые свойства:
-* окно выборки снапится к пиксельной сетке растра — возвращаются собственные
-  пиксели растра, без неявного ресемплинга (см. block_io.align_rect_to_raster);
-* блок читается одним куском через block.data() → numpy, без Python-цикла
-  по пикселям;
-* у всех каналов ОДНА общая маска валидности, поэтому результат — корректная
-  матрица (n_pixels, n_bands): values[i, a] и values[i, b] — это один и тот же
-  пиксель. Именно это нужно для спектральных сигнатур, ковариации, SAM
-  и расстояния Махаланобиса.
+Key properties:
+* the sampling window is snapped to the raster pixel grid, so the raster's own
+  pixels come back with no implicit resampling (see block_io.align_rect_to_raster);
+* the block is read in one go through block.data() -> numpy, with no Python loop
+  over pixels;
+* all bands share ONE validity mask, so the result is a well-formed
+  (n_pixels, n_bands) matrix: values[i, a] and values[i, b] are the same pixel.
+  That is exactly what spectral signatures, covariance, SAM and the Mahalanobis
+  distance require.
 
-Все координаты (rect / geom) ожидаются В CRS РАСТРА.
+All coordinates (rect / geom) are expected IN THE RASTER CRS.
 """
 
 import numpy as np
@@ -38,35 +38,35 @@ MODE_BBOX = 'bbox'
 MODE_POLYGON = 'polygon'
 MODE_OUTSIDE = 'outside'
 
-#: Пикселей на порцию чтения. Окно обрабатывается полосами, иначе координатная
-#: сетка и блок в float64 выделяются на всё окно сразу: для 60 млн пикселей это
-#: 1 ГБ только на сетку плюс 0.5 ГБ на канал — QGIS падает на первом же крупном
-#: объекте.
+#: Pixels per read chunk. The window is processed in stripes; otherwise the
+#: coordinate grid and the float64 block are allocated for the whole window at
+#: once: for 60M pixels that is 1 GB for the grid alone plus 0.5 GB per band, and
+#: QGIS dies on the very first large feature.
 CHUNK_PIXELS = 2_000_000
 
-#: Сколько пикселей максимум попадает в результат. Средние, ковариация и
-#: гистограммы по 300 тыс. пикселей неотличимы от расчёта по десяткам
-#: миллионов, а память и время отличаются на порядки. Факт прореживания
-#: записывается в RasterSample и уезжает в JSON — молча оно не происходит.
+#: Upper bound on how many pixels reach the result. Means, covariance and
+#: histograms over 300k pixels are indistinguishable from those over tens of
+#: millions, while memory and time differ by orders of magnitude. Subsampling is
+#: recorded in RasterSample and exported to JSON; it never happens silently.
 DEFAULT_MAX_VALUES = 300_000
 
 
 # ---------------------------------------------------------------------------
-# Результат выборки
+# Sampling result
 # ---------------------------------------------------------------------------
 
 class RasterSample:
     """
-    Набор пикселей растра, отобранных по геометрии.
+    The set of raster pixels selected by a geometry.
 
     Attributes
     ----------
-    band_names : list[str]                 названия каналов (n_bands)
-    values     : np.ndarray (n_pixels, n_bands), float64, без NaN
-    rect       : QgsRectangle              фактическое окно чтения (снапнутое)
-    shape      : (nrows, ncols)            размер окна в пикселях
-    mask       : np.ndarray (nrows*ncols,) bool — какие пиксели окна попали
-                                           в выборку (row-major)
+    band_names : list[str]                 band names (n_bands)
+    values     : np.ndarray (n_pixels, n_bands), float64, free of NaN
+    rect       : QgsRectangle              the actual (snapped) read window
+    shape      : (nrows, ncols)            window size in pixels
+    mask       : np.ndarray (nrows*ncols,) bool - which window pixels made it
+                                           into the sample (row-major)
     """
 
     __slots__ = ('band_names', 'values', 'rect', 'shape', 'mask', 'total_pixels')
@@ -77,7 +77,7 @@ class RasterSample:
         self.rect = rect
         self.shape = shape
         self.mask = mask
-        #: сколько валидных пикселей было ДО прореживания
+        #: how many valid pixels there were BEFORE subsampling
         self.total_pixels = int(total_pixels if total_pixels is not None
                                 else values.shape[0])
 
@@ -103,14 +103,14 @@ class RasterSample:
         return self.values[:, self.band_names.index(name)]
 
     def as_dict(self) -> dict:
-        """{band_name: 1-D array}. Длины массивов одинаковы у всех каналов."""
+        """{band_name: 1-D array}. Every band array has the same length."""
         if not self:
             return {}
         return {name: self.values[:, i] for i, name in enumerate(self.band_names)}
 
 
 # ---------------------------------------------------------------------------
-# Ядро выборки
+# Sampling core
 # ---------------------------------------------------------------------------
 
 def _band_name(raster_layer, band_idx: int) -> str:
@@ -132,23 +132,24 @@ def sample_raster(
     progress=_NOOP,
 ):
     """
-    Отобрать пиксели растра.
+    Select raster pixels.
 
     Parameters
     ----------
-    rect : QgsRectangle   окно (для mode='bbox'); игнорируется, если задан geom
-    geom : QgsGeometry    полигон в CRS растра (обязателен для polygon/outside)
-    mode : 'bbox'     — все пиксели окна
-           'polygon'  — центры пикселей внутри полигона
-           'outside'  — центры пикселей в bbox полигона, но снаружи него
+    rect : QgsRectangle   the window (for mode='bbox'); ignored when geom is given
+    geom : QgsGeometry    polygon in the raster CRS (required for polygon/outside)
+    mode : 'bbox'     - every pixel of the window
+           'polygon'  - pixel centres inside the polygon
+           'outside'  - pixel centres inside the polygon bbox but outside the
+                        polygon itself
 
     Returns
     -------
-    RasterSample либо None (нет пересечения / нет валидных пикселей).
+    RasterSample, or None (no intersection / no valid pixels).
 
     Raises
     ------
-    SampleWindowTooLarge — если окно слишком велико.
+    SampleWindowTooLarge - if the window is too large.
     """
     if raster_layer is None:
         return None
@@ -156,7 +157,7 @@ def sample_raster(
     if provider is None:
         return None
 
-    # --- геометрия и окно ---------------------------------------------------
+    # --- geometry and window ------------------------------------------------
     rings = []
     if mode in (MODE_POLYGON, MODE_OUTSIDE):
         if geom is None or geom.isEmpty():
@@ -179,9 +180,9 @@ def sample_raster(
         return None
     names = [_band_name(raster_layer, i + 1) for i in range(n_bands)]
 
-    # --- чтение полосами ----------------------------------------------------
-    # Окно может быть огромным, поэтому и маска, и данные считаются порциями:
-    # пик памяти держится в десятках МБ независимо от размера объекта.
+    # --- reading in stripes -------------------------------------------------
+    # The window may be huge, so both mask and data are computed chunk by chunk:
+    # peak memory stays in the tens of MB whatever the size of the feature.
     rows_per_chunk = max(1, min(nrows, CHUNK_PIXELS // max(ncols, 1)))
     pixel_h = window.height() / nrows
 
@@ -190,7 +191,7 @@ def sample_raster(
 
     for r0 in range(0, nrows, rows_per_chunk):
         r1 = min(r0 + rows_per_chunk, nrows)
-        progress(f"Чтение строк {r0}–{r1} из {nrows}…", r0 / nrows * 100)
+        progress(f"Reading rows {r0}–{r1} of {nrows}…", r0 / nrows * 100)
 
         sub_rect = QgsRectangle(
             window.xMinimum(), window.yMaximum() - r1 * pixel_h,
@@ -215,7 +216,7 @@ def sample_raster(
             block = provider.block(band_idx, sub_rect, ncols, sub_rows)
             arr = block_to_array(block)
             if arr is None:
-                # канал не прочитался — пиксели уйдут по маске валидности
+                # the band could not be read; its pixels drop out via the validity mask
                 arr = np.full((sub_rows, ncols), np.nan)
             else:
                 mask_source_nodata(arr, provider, band_idx)
@@ -225,7 +226,7 @@ def sample_raster(
         values_chunk = np.column_stack(band_columns)
         del band_columns
 
-        # --- ОДНА маска валидности на все каналы ---
+        # --- ONE validity mask shared by all bands ---
         valid = np.all(np.isfinite(values_chunk), axis=1)
         if not valid.any():
             continue
@@ -241,27 +242,27 @@ def sample_raster(
     indices = np.concatenate(index_chunks)
     del chunks, index_chunks
 
-    # --- прореживание, если пикселей слишком много --------------------------
+    # --- subsampling when there are too many pixels -------------------------
     if max_values and values.shape[0] > max_values:
         step = int(np.ceil(values.shape[0] / max_values))
         values = values[::step]
         indices = indices[::step]
-        progress(f"Прорежено: {total_valid} → {values.shape[0]} пикс.", 95)
+        progress(f"Subsampled: {total_valid} → {values.shape[0]} px", 95)
 
     used = np.zeros(ncols * nrows, dtype=bool)
     used[indices] = True
 
-    progress("Готово", 100)
+    progress("Done", 100)
     return RasterSample(names, values, window, (nrows, ncols), used,
                         total_pixels=total_valid)
 
 
 # ---------------------------------------------------------------------------
-# Совместимые обёртки: {band_name: 1-D array}
+# Compatibility wrappers: {band_name: 1-D array}
 # ---------------------------------------------------------------------------
 
 def extract_raster_values_in_rect(raster_layer, rect, buffer_percent=0.0, progress=_NOOP):
-    """Значения всех каналов в прямоугольнике (координаты — в CRS растра)."""
+    """Values of every band within a rectangle (coordinates in the raster CRS)."""
     sample = sample_raster(
         raster_layer, rect=rect, mode=MODE_BBOX,
         buffer_percent=buffer_percent, progress=progress,
@@ -272,7 +273,7 @@ def extract_raster_values_in_rect(raster_layer, rect, buffer_percent=0.0, progre
 def extract_raster_values_in_geometry(
     raster_layer, geom, buffer_percent=0.0, eps=1e-12, progress=_NOOP
 ):
-    """Значения каналов для центров пикселей внутри полигона."""
+    """Band values for pixel centres inside a polygon."""
     sample = sample_raster(
         raster_layer, geom=geom, mode=MODE_POLYGON,
         buffer_percent=buffer_percent, eps=eps, progress=progress,
@@ -281,7 +282,7 @@ def extract_raster_values_in_geometry(
 
 
 def extract_raster_values_outside_geometry(raster_layer, geom, eps=1e-12, progress=_NOOP):
-    """Значения каналов в bbox полигона, но вне самого полигона (фон)."""
+    """Band values inside the polygon bbox but outside the polygon itself (background)."""
     sample = sample_raster(
         raster_layer, geom=geom, mode=MODE_OUTSIDE,
         eps=eps, progress=progress,
@@ -291,9 +292,9 @@ def extract_raster_values_outside_geometry(raster_layer, geom, eps=1e-12, progre
 
 def get_feature_bounding_rect(features, buffer_meters=0):
     """
-    Общий bbox объектов В CRS ИХ СЛОЯ.
-    ВНИМАНИЕ: если CRS слоя отличается от CRS растра, результат нельзя
-    передавать в выборку напрямую — сначала перепроецируйте геометрию.
+    The combined bbox of the features IN THEIR OWN LAYER CRS.
+    NOTE: if the layer CRS differs from the raster CRS, the result must not be
+    passed to the sampler directly - reproject the geometry first.
     """
     minX, minY = float('inf'), float('inf')
     maxX, maxY = float('-inf'), float('-inf')

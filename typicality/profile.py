@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """
 profile.py
-Сводная статистика спектральной выборки и эталонный профиль класса.
+Summary statistics of a spectral sample, and the reference profile of a class.
 
-SpectralStats  — обёртка над матрицей (n_pixels, n_bands): среднее, ковариация,
-                 регуляризация, расстояние Махаланобиса.
-ClassProfile   — сериализуемый эталон класса: то же самое плюс гистограммы и
-                 перцентили по каналам, привязка к растру и объектам-источникам.
+SpectralStats  - a wrapper around an (n_pixels, n_bands) matrix: mean,
+                 covariance, regularization, Mahalanobis distance.
+ClassProfile   - a serializable class profile: the same, plus per-band
+                 histograms and percentiles, and links to the source raster and
+                 features.
 
-Ковариация вырождается, когда пикселей мало относительно числа каналов
-(маленький объект) или канал константный. Поэтому она всегда сжимается к
-масштабированной единичной матрице, а коэффициент сжатия попадает в JSON —
-чтобы по выгрузке было видно, насколько статистике можно верить.
+Covariance degenerates when there are few pixels relative to the number of bands
+(a small feature) or when a band is constant. It is therefore always shrunk
+towards a scaled identity matrix, and the shrinkage coefficient goes into the
+JSON, so the export shows how far the statistics can be trusted.
 """
 
 import json
@@ -29,15 +30,15 @@ def _now():
 
 
 # ---------------------------------------------------------------------------
-# Ковариация
+# Covariance
 # ---------------------------------------------------------------------------
 
 def regularize_cov(cov, n_pixels):
     """
-    Сжатие ковариации к диагонали: (1-λ)·Σ + λ·(tr Σ / k)·I.
+    Shrink the covariance towards the diagonal: (1-l)*S + l*(tr S / k)*I.
 
-    λ = k/n — чем меньше пикселей на канал, тем сильнее сжатие. При
-    необходимости λ увеличивается, пока матрица не станет обратимой.
+    l = k/n - the fewer pixels per band, the stronger the shrinkage. If need be,
+    l is raised further until the matrix becomes invertible.
 
     Returns (cov_reg, shrinkage, was_singular)
     """
@@ -47,7 +48,7 @@ def regularize_cov(cov, n_pixels):
 
     avg_var = float(np.trace(cov)) / k if k else 0.0
     if not np.isfinite(avg_var) or avg_var <= 0:
-        # все каналы константны — осмысленной ковариации нет
+        # every band is constant, there is no meaningful covariance
         return identity * 1e-12, 1.0, True
 
     lam = float(np.clip(k / max(int(n_pixels), 1), 0.0, 1.0))
@@ -64,24 +65,24 @@ def regularize_cov(cov, n_pixels):
 
 
 def mahalanobis_sq(points, mean, inv_cov):
-    """d² для каждой строки points относительно (mean, inv_cov)."""
+    """d^2 for every row of points with respect to (mean, inv_cov)."""
     delta = np.atleast_2d(np.asarray(points, dtype=np.float64)) - np.asarray(mean, dtype=np.float64)
     return np.einsum("ij,jk,ik->i", delta, inv_cov, delta)
 
 
 # ---------------------------------------------------------------------------
-# Статистика выборки
+# Sample statistics
 # ---------------------------------------------------------------------------
 
 class SpectralStats:
-    """Среднее / ковариация / расстояния для матрицы (n_pixels, n_bands)."""
+    """Mean / covariance / distances for an (n_pixels, n_bands) matrix."""
 
     def __init__(self, band_names, values):
         self.band_names = list(band_names)
         self.values = np.atleast_2d(np.asarray(values, dtype=np.float64))
         if self.values.shape[1] != len(self.band_names):
             raise ValueError(
-                f"каналов {len(self.band_names)}, а столбцов в матрице "
+                f"bands: {len(self.band_names)}, but the matrix has columns: "
                 f"{self.values.shape[1]}")
         self._mean = None
         self._cov = None
@@ -92,7 +93,7 @@ class SpectralStats:
 
     @classmethod
     def from_sample(cls, sample):
-        """Из RasterSample (raster_utils.extract_rectangle)."""
+        """Build from a RasterSample (raster_utils.extract_rectangle)."""
         return cls(sample.band_names, sample.values)
 
     @property
@@ -111,7 +112,7 @@ class SpectralStats:
 
     @property
     def cov(self):
-        """Сырая выборочная ковариация (может быть вырожденной)."""
+        """Raw sample covariance (may be singular)."""
         if self._cov is None:
             if self.n < 2:
                 self._cov = np.zeros((self.k, self.k))
@@ -152,7 +153,7 @@ class SpectralStats:
         return result
 
     def histograms(self, bins=DEFAULT_BINS):
-        """{band: {counts, edges}} — общие рамки для сравнения распределений."""
+        """{band: {counts, edges}} - shared bounds for comparing distributions."""
         result = {}
         for i, name in enumerate(self.band_names):
             column = self.values[:, i]
@@ -165,18 +166,18 @@ class SpectralStats:
 
 
 # ---------------------------------------------------------------------------
-# Эталон класса
+# Class profile
 # ---------------------------------------------------------------------------
 
 class ClassProfile:
-    """Сериализуемый эталон класса."""
+    """A serializable class profile."""
 
     def __init__(self, name, band_names, n_pixels, mean, cov_reg,
                  shrinkage=0.0, singular=False, percentiles=None, histograms=None,
                  raster=None, source=None, created_at=None, cov_raw=None,
                  label=None):
-        #: name — значение поля класса, по нему идёт сопоставление объектов.
-        #: label — подпись из легенды слоя, только для показа в интерфейсе.
+        #: name - the class field value; features are matched against it.
+        #: label - the legend label, used only for display in the interface.
         self.name = name
         self.label = label or None
         self.band_names = list(band_names)
@@ -197,7 +198,7 @@ class ClassProfile:
 
     @property
     def title(self):
-        """Как называть эталон в интерфейсе."""
+        """How to name the profile in the interface."""
         return self.label or self.name
 
     @classmethod
@@ -245,17 +246,17 @@ class ClassProfile:
 
     def compatibility(self, band_names):
         """
-        (ok, сообщение). Эталон и объект должны быть с одинаковым набором
-        каналов — иначе сравниваются несопоставимые величины.
+        (ok, message). The profile and the feature must have the same set of
+        bands, otherwise incomparable quantities would be compared.
         """
         other = list(band_names)
         if other == self.band_names:
             return True, ""
         if len(other) != len(self.band_names):
-            return False, (f"каналов у объекта {len(other)}, у эталона "
-                           f"{len(self.band_names)} — сравнение невозможно")
-        return False, (f"названия каналов не совпадают: {other} vs {self.band_names}. "
-                       "Убедитесь, что это тот же растр")
+            return False, (f"bands in the feature: {len(other)}, in the profile: "
+                           f"{len(self.band_names)} - comparison is impossible")
+        return False, (f"band names do not match: {other} vs {self.band_names}. "
+                       "Make sure this is the same raster")
 
     # -------------------------------------------------------- (de)serialize
 
@@ -282,9 +283,9 @@ class ClassProfile:
     @classmethod
     def from_dict(cls, data):
         if not isinstance(data, dict) or "band_names" not in data:
-            raise ValueError("это не профиль класса")
+            raise ValueError("this is not a class profile")
         if data.get("format", FORMAT) != FORMAT:
-            raise ValueError(f"чужой формат профиля: {data.get('format')}")
+            raise ValueError(f"unknown profile format: {data.get('format')}")
         return cls(
             name=data.get("name", "class"),
             label=data.get("label"),
@@ -313,12 +314,12 @@ class ClassProfile:
             return cls.from_dict(json.load(f))
 
     def __repr__(self):
-        return (f"<ClassProfile {self.name!r}: {self.n_pixels} пикс., "
-                f"{self.k} канал(ов), сжатие {self.shrinkage:.3f}>")
+        return (f"<ClassProfile {self.name!r}: {self.n_pixels} px, "
+                f"{self.k} band(s), shrinkage {self.shrinkage:.3f}>")
 
 
 # ---------------------------------------------------------------------------
-# Эталон в проекте
+# Class profile stored in the project
 # ---------------------------------------------------------------------------
 
 PROJECT_SCOPE = "calc_sp_ch"
@@ -326,7 +327,7 @@ PROJECT_ENTRY = "class_profile"
 
 
 def save_to_project(project, profile):
-    """Положить текущий эталон в проект (переживает перезапуск QGIS)."""
+    """Store the current profile in the project (survives a QGIS restart)."""
     if profile is None:
         return clear_in_project(project)
     project.writeEntry(PROJECT_SCOPE, PROJECT_ENTRY,
@@ -335,7 +336,7 @@ def save_to_project(project, profile):
 
 
 def load_from_project(project):
-    """Достать эталон из проекта или None."""
+    """Read the profile back from the project, or None."""
     raw, ok = project.readEntry(PROJECT_SCOPE, PROJECT_ENTRY)
     if not ok or not raw:
         return None
