@@ -40,7 +40,12 @@ def feature_key(feature, id_field=None):
         except (KeyError, IndexError):
             value = None
         if value is not None and not _is_null(value):
-            return str(value)
+            # a blank string is "no value", not a key: a file-based layer
+            # returns NULL for it, but a memory or GeoPackage layer can hold a
+            # real empty string, and every such feature would then share one key
+            text = str(value).strip()
+            if text:
+                return text
     return str(feature.id())
 
 
@@ -77,9 +82,10 @@ class TypicalityStore:
     Feature assessments plus the chosen identifier field, persisted in the project.
 
     Record layout: {"version": 1,
-                    "records":      {layer_id: {feature_key: record}},
-                    "id_fields":    {layer_id: "feature key field"},
-                    "class_fields": {layer_id: "feature class field"}}
+                    "records":       {layer_id: {feature_key: record}},
+                    "id_fields":     {layer_id: "feature key field"},
+                    "class_fields":  {layer_id: "feature class field"},
+                    "target_fields": {layer_id: "attribute to mirror into"}}
     """
 
     PAYLOAD_VERSION = 1
@@ -89,6 +95,7 @@ class TypicalityStore:
         self._data = {}
         self._id_fields = {}
         self._class_fields = {}
+        self._target_fields = {}
         self._sources = {}          # layer_id -> source, used to carry settings over
         self.reload()
 
@@ -99,6 +106,7 @@ class TypicalityStore:
     def reload(self):
         """Re-read from the project (call this after another project is opened)."""
         self._data, self._id_fields, self._class_fields = {}, {}, {}
+        self._target_fields = {}
         self._sources = {}
         raw, ok = self.project.readEntry(SCOPE, ENTRY)
         if not ok or not raw:
@@ -113,18 +121,20 @@ class TypicalityStore:
             self._data = data.get("records") or {}
             self._id_fields = data.get("id_fields") or {}
             self._class_fields = data.get("class_fields") or {}
+            self._target_fields = data.get("target_fields") or {}
             self._sources = data.get("sources") or {}
         else:                       # early layout: {layer_id: {...}} at the top level
             self._data = data
 
     def flush(self):
         """Write into the project (which is marked as modified)."""
-        if self._data or self._id_fields or self._class_fields:
+        if self._data or self._id_fields or self._class_fields or self._target_fields:
             payload = {
                 "version": self.PAYLOAD_VERSION,
                 "records": self._data,
                 "id_fields": self._id_fields,
                 "class_fields": self._class_fields,
+                "target_fields": self._target_fields,
                 "sources": self._sources,
             }
             self.project.writeEntry(SCOPE, ENTRY, json.dumps(payload, ensure_ascii=False))
@@ -159,7 +169,8 @@ class TypicalityStore:
         if not key:
             return None
         known = (layer_id in self._data or layer_id in self._id_fields
-                 or layer_id in self._class_fields)
+                 or layer_id in self._class_fields
+                 or layer_id in self._target_fields)
         if known:
             self.remember_layer(layer)
             return None
@@ -179,7 +190,8 @@ class TypicalityStore:
 
     def _move_layer(self, old_id, layer_id, key):
         moved = False
-        for store in (self._data, self._id_fields, self._class_fields):
+        for store in (self._data, self._id_fields, self._class_fields,
+                      self._target_fields):
             if old_id in store:
                 store[layer_id] = store.pop(old_id)
                 moved = True
@@ -229,6 +241,27 @@ class TypicalityStore:
             self._class_fields.pop(layer_id, None)
         self.flush()
         return self.class_field(layer_id)
+
+    # ------------------------------------------------------------------
+    # Attribute the assessments are mirrored into
+    # ------------------------------------------------------------------
+
+    def target_field(self, layer_id):
+        """
+        The layer attribute assessments are written to (None - none).
+
+        The store itself never touches the layer: it only remembers the choice,
+        because writing into the user's data has to stay an explicit decision.
+        """
+        return self._target_fields.get(layer_id) or None
+
+    def set_target_field(self, layer_id, field_name):
+        if field_name:
+            self._target_fields[layer_id] = str(field_name)
+        else:
+            self._target_fields.pop(layer_id, None)
+        self.flush()
+        return self.target_field(layer_id)
 
     def class_of(self, layer_id, feature):
         """The feature's class field value, or None."""

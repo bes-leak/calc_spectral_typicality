@@ -96,6 +96,7 @@ from the toolbar button or *Vector → Spectral Characteristics*.
 | **class:** | the attribute holding a feature's class |
 | **key:** | the attribute used as the feature key |
 | 1 / 2 / 3 / not set | set the typicality of the selected feature by hand |
+| ⤓ to field | also mirror the assessments into an attribute of the layer |
 | ⚙ Auto-assess | assess one feature, showing every metric and its contribution |
 | ⚙ Batch over layer | assess every feature whose class has a profile |
 | ⬇ Import assessments | read assessments back from a JSON or CSV file |
@@ -103,7 +104,39 @@ from the toolbar button or *Vector → Spectral Characteristics*.
 
 Assessments and profiles live in the project properties, so they are saved with
 the `.qgz` and need no editable vector layer. Nothing is written to your source
-data.
+data unless you ask for it with **⤓ to field**.
+
+### Mirroring the assessments into an attribute
+
+Keeping the assessments in the project leaves your data untouched, but it also
+puts them out of reach of everything QGIS does with attributes. Tick **⤓ to
+field** and they are mirrored into a real integer field as well — `typicality`,
+ten characters, which is exactly what a shapefile allows:
+
+```
+"typicality" = 3                          -- filter the atypical ones
+"typicality" IS NULL                      -- what has not been assessed yet
+```
+
+From there the field behaves like any other: categorized styling, labels,
+*Select by expression*, joins, export to any format.
+
+- Turning it on asks first, creates the field if it is missing, and fills it
+  with everything assessed so far.
+- After that every assessment keeps it in step — by hand, single, batch or
+  imported.
+- A feature with no assessment gets NULL, not zero: a stale value from an
+  earlier run is worse than an empty cell.
+- Turning it off only stops further writes. The values already in the layer
+  stay, because deleting a column nobody asked to delete would be worse.
+- If you have the layer open for editing, the changes join your edit buffer and
+  your undo stack, and you decide when to commit. Otherwise they are saved
+  straight away.
+
+The project remains the source of truth; the field is a copy of it. If the two
+drift apart — because the field was off for a while, or someone edited it by
+hand — switching the checkbox off and on again rewrites the whole column from
+the project.
 
 ---
 

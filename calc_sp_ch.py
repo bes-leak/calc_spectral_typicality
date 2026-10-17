@@ -77,6 +77,9 @@ from .typicality.batch_dialog import BatchRunDialog
 from .typicality.library import ProfileLibrary
 from .typicality.metrics import DEFAULT_THRESHOLDS, DEFAULT_WEIGHTS, MODE_SUM
 from .typicality.profile import ClassProfile
+from .typicality.layer_field import (
+    DEFAULT_FIELD, FieldWriteError, sync_features, sync_layer,
+)
 from .typicality.store import AUTO, MANUAL, TypicalityStore, feature_key
 
 
@@ -365,6 +368,8 @@ class SpectralCharacteristics:
         dockwidget.exportJsonClicked.connect(lambda: self.export_feature_json(dock_id))
         dockwidget.typicalityChanged.connect(lambda v: self.on_typicality_changed(dock_id, v))
         dockwidget.idFieldChanged.connect(lambda f: self.on_id_field_changed(dock_id, f))
+        dockwidget.targetFieldToggled.connect(
+            lambda on: self.on_target_field_toggled(dock_id, on))
         dockwidget.etalonRequested.connect(lambda: self.make_etalon(dock_id))
         dockwidget.etalonSaveRequested.connect(lambda: self.save_etalon(dock_id))
         dockwidget.etalonLoadRequested.connect(lambda: self.load_etalon(dock_id))
@@ -617,10 +622,12 @@ class SpectralCharacteristics:
                       f"identifier ({adopted})")
 
         fields, id_field, class_field, value = [], "", "", None
+        target_field = ""
         profile_for_object = None
         if is_vector:
             fields = [field.name() for field in layer.fields()]
             id_field = self.store.id_field(layer.id()) or ""
+            target_field = self.store.target_field(layer.id()) or ""
             class_field = self.store.class_field(layer.id()) or ""
             if not class_field:
                 # the layer is coloured by class, so the classification field has already
@@ -661,6 +668,7 @@ class SpectralCharacteristics:
                 dockwidget.set_selection_info(info, enabled, auto_enabled,
                                               batch_enabled=is_vector and bool(self.profiles))
                 dockwidget.set_typicality(value)
+                dockwidget.set_target_field(target_field)
             except RuntimeError:      # the widget is already gone
                 continue
 
@@ -680,8 +688,77 @@ class SpectralCharacteristics:
         key = self.store.key_for(layer.id(), feature)
         self.store.set(layer.id(), key, value or None, source=MANUAL)
         stored = self.store.value(layer.id(), key)
+        self._mirror_to_field(layer, {feature.id(): stored})
         print(f"{dock_id}: feature {key} → {label_for(stored)}")
         self._update_typicality_ui()
+
+    # ------------------------------------------------------------------
+    # Mirroring the assessments into a layer attribute
+    # ------------------------------------------------------------------
+
+    def on_target_field_toggled(self, dock_id, enabled):
+        """
+        Turn mirroring into a layer attribute on or off.
+
+        Switching it on modifies the user's data, so it asks first, then fills
+        the field with everything assessed so far. Switching it off only stops
+        further writes: the values already in the layer are left alone, since
+        deleting a column nobody asked to delete would be worse.
+        """
+        layer = self.iface.activeLayer()
+        title = "Typicality field"
+        if not layer or layer.type() != 0:
+            QMessageBox.warning(self.iface.mainWindow(), title,
+                                "Select a vector layer.")
+            self._update_typicality_ui(dock_id)
+            return
+
+        if not enabled:
+            self.store.set_target_field(layer.id(), None)
+            self._update_typicality_ui()
+            return
+
+        existing = self.store.target_field(layer.id())
+        if existing is None:
+            reply = QMessageBox.question(
+                self.iface.mainWindow(), title,
+                f"Write the assessments into the attribute \"{DEFAULT_FIELD}\" of "
+                f"layer \"{layer.name()}\"?\n\n"
+                "The field is created if it is missing, and kept in step with "
+                "every later assessment.\nThis changes the layer's data.",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                self._update_typicality_ui(dock_id)
+                return
+
+        try:
+            field, written = sync_layer(layer, self.store, DEFAULT_FIELD)
+        except FieldWriteError as e:
+            QMessageBox.warning(self.iface.mainWindow(), title, str(e))
+            self._update_typicality_ui(dock_id)
+            return
+
+        self.store.set_target_field(layer.id(), field)
+        self._update_typicality_ui()
+        print(f"⤓ Field \"{field}\": {written} feature(s) filled in")
+
+    def _mirror_to_field(self, layer, values_by_fid):
+        """
+        Write {fid: value} into the layer attribute, if the layer asked for it.
+
+        A failure here must not undo the assessment itself: the project is the
+        source of truth and the attribute only mirrors it, so the error is
+        reported and the run carries on.
+        """
+        if layer is None or not self.store.target_field(layer.id()):
+            return 0
+        try:
+            _, written = sync_features(layer, self.store, values_by_fid)
+            return written
+        except (FieldWriteError, RuntimeError) as e:
+            self.iface.messageBar().pushMessage(
+                "Typicality field", str(e), level=Qgis.Critical, duration=6)
+            return 0
 
     def on_id_field_changed(self, dock_id, field_name):
         """
@@ -1164,6 +1241,7 @@ class SpectralCharacteristics:
             details["object_class"] = class_name
         details["n_pixels"] = sample.n_pixels
         self.store.set(vector_layer.id(), key, result.value, source=AUTO, details=details)
+        self._mirror_to_field(vector_layer, {feature.id(): result.value})
         self._update_typicality_ui()
         print(f"⚙ {key}: score {result.score:.3f} → {result.value} "
               f"({label_for(result.value)})")
@@ -1294,6 +1372,8 @@ class SpectralCharacteristics:
                            details=details_for_store(row, raster_layer.name()),
                            flush=False)
         self.store.flush()
+        self._mirror_to_field(vector_layer,
+                              {row["fid"]: row["value"] for row in report.rows})
         self._update_typicality_ui()
 
         saved = ""
@@ -1552,6 +1632,14 @@ class SpectralCharacteristics:
         if field_known and file_field != current_field:
             self.store.set_id_field(layer_id, file_field or None)
         applied = self.store.import_records(layer_id, info["records"])
+        if self.store.target_field(layer_id):
+            # an import can touch any feature of the layer, so the whole
+            # attribute is brought back in line rather than a known handful
+            try:
+                sync_layer(vector_layer, self.store)
+            except FieldWriteError as e:
+                self.iface.messageBar().pushMessage(
+                    "Typicality field", str(e), level=Qgis.Critical, duration=6)
         self._update_typicality_ui()
         QMessageBox.information(
             self.iface.mainWindow(), "Assessments",

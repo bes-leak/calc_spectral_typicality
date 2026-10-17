@@ -42,6 +42,7 @@ metrics = importlib.import_module("cspch.typicality.metrics")
 profile_mod = importlib.import_module("cspch.typicality.profile")
 library_mod = importlib.import_module("cspch.typicality.library")
 batch_mod = importlib.import_module("cspch.typicality.batch")
+store_mod = importlib.import_module("cspch.typicality.store")
 histogram_mod = importlib.import_module("cspch.raster_utils.histogram")
 
 SpectralStats = profile_mod.SpectralStats

@@ -4,7 +4,7 @@ import os
 from qgis.PyQt import QtWidgets, uic
 from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (
-    QButtonGroup, QComboBox, QGridLayout, QGroupBox, QLabel,
+    QButtonGroup, QCheckBox, QComboBox, QGridLayout, QGroupBox, QLabel,
     QPushButton, QRadioButton,
 )
 
@@ -30,6 +30,7 @@ class SpectralCharacteristicsDockWidget(QtWidgets.QDockWidget, FORM_CLASS):
     typicalityChanged = pyqtSignal(int)       # 1..3, 0 = not set
     idFieldChanged = pyqtSignal(str)          # '' = key taken from the fid
     classFieldChanged = pyqtSignal(str)       # '' = no class field configured
+    targetFieldToggled = pyqtSignal(bool)     # mirror assessments into a layer field
     profileSelected = pyqtSignal(str)         # another profile was picked in the list
     etalonRequested = pyqtSignal()            # turn the selection into a class profile
     etalonSaveRequested = pyqtSignal()
@@ -200,7 +201,17 @@ class SpectralCharacteristicsDockWidget(QtWidgets.QDockWidget, FORM_CLASS):
         # buttonClicked rather than toggled: setting the value programmatically
         # must not look like a user action
         self.radio_group.buttonClicked.connect(self._on_typicality_clicked)
-        grid.addLayout(radio_grid, 3, 0, 1, 7)
+        grid.addLayout(radio_grid, 3, 0, 1, 4)
+
+        # Writing into the user's data stays an explicit choice, so it is a
+        # checkbox rather than something the assessment does on its own.
+        self.check_target_field = QCheckBox("⤓ to field", group)
+        self.check_target_field.setToolTip(
+            "Also write the assessment into an attribute of the layer, so it\n"
+            "can be filtered, styled and labelled by.\n"
+            "The field is created on first use and kept in step afterwards")
+        self.check_target_field.clicked.connect(self.targetFieldToggled.emit)
+        grid.addWidget(self.check_target_field, 3, 4, 1, 3)
 
         # --- automatic assessment and import ---
         self.btn_auto_typicality = QPushButton("⚙ Auto-assess", group)
@@ -257,6 +268,14 @@ class SpectralCharacteristicsDockWidget(QtWidgets.QDockWidget, FORM_CLASS):
         button = self.radio_buttons.get(value or UNSET)
         if button is not None:
             button.setChecked(True)
+
+    def set_target_field(self, field_name):
+        """Show whether assessments are mirrored, without raising the signal."""
+        self.check_target_field.blockSignals(True)
+        self.check_target_field.setChecked(bool(field_name))
+        self.check_target_field.setText(f"⤓ {field_name}" if field_name
+                                        else "⤓ to field")
+        self.check_target_field.blockSignals(False)
 
     def set_id_field_options(self, field_names, current=None):
         """Fill the identifier field list, preserving the current choice."""

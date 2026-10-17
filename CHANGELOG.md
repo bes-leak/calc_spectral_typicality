@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- "⤓ to field": mirror the typicality assessments into an integer attribute of
+  the layer (`typicality`), so they can be filtered, styled and labelled by.
+  Turning it on asks first and backfills everything assessed so far; afterwards
+  manual, single, batch and imported assessments all keep it in step. Features
+  with no assessment are set to NULL. Turning it off stops further writes and
+  leaves the existing values alone.
+
+### Fixed
+- An empty string in the identifier field produced the key `""` instead of
+  falling back to the feature id, so every such feature shared one key and their
+  assessments overwrote one another. File-based layers return NULL and were
+  never affected; memory and GeoPackage layers could be.
+
 ## 0.2.0
 
 ### Added
