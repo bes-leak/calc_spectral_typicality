@@ -2,7 +2,7 @@
 name=Spectral Characteristics
 qgisMinimumVersion=3.22
 description=Per-feature spectral statistics from a raster, class reference profiles, and a typicality assessment of every feature against its class.
-version=0.2.0
+version=0.3.0
 author=Evgeny Belousov
 email=belousoff.zhencka@yandex.ru
 
@@ -23,7 +23,12 @@ homepage=https://github.com/bes-leak/calc_sp_ch
 
 hasProcessingProvider=no
 
-changelog=0.2.0
+changelog=0.3.0
+    - Assessments can be mirrored into an integer attribute of the layer
+      ("typicality"), so they can be filtered, styled and labelled by
+    - Fixed: an empty identifier field produced one shared key for every such
+      feature, and their assessments overwrote one another
+    0.2.0
     - English interface; documentation in English and Russian
     - Library of class profiles: several classes held in the project at once
     - Typicality assessment: six metrics, adjustable weights and thresholds

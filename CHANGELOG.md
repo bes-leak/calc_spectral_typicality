@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 ### Added
 - "⤓ to field": mirror the typicality assessments into an integer attribute of
